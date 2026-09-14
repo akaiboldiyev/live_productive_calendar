@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.app.WallpaperManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -8,9 +9,11 @@ import android.graphics.Canvas
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
+import com.example.GoalApplication
 import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
 import com.example.model.GoalData
@@ -40,23 +43,31 @@ import kotlin.math.min
 class GoalWallpaperService : WallpaperService() {
 
     companion object {
+        private const val TAG_TIMELINE = "GOAL_TIMELINE"
         private const val TAG_SERVICE = "GOAL_SERVICE"
         private const val TAG_ENGINE = "GOAL_ENGINE"
         private val engineSequence = AtomicInteger(0)
+
+        private fun t(): String = "[+${GoalApplication.elapsedSinceProcessStart()}ms]"
     }
 
     override fun onCreate() {
         super.onCreate()
+        val wm = WallpaperManager.getInstance(applicationContext)
+        val info = wm.wallpaperInfo
+        Log.d(TAG_TIMELINE, "${t()} WallpaperService.onCreate: currentActiveWallpaper=${info?.component}")
         Log.d(TAG_SERVICE, "GoalWallpaperService onCreate: process restarted/created")
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG_TIMELINE, "${t()} WallpaperService.onDestroy")
         Log.d(TAG_SERVICE, "GoalWallpaperService onDestroy")
     }
 
     override fun onCreateEngine(): Engine {
         val id = engineSequence.incrementAndGet()
+        Log.d(TAG_TIMELINE, "${t()} WallpaperService.onCreateEngine: assigned engineId=$id")
         Log.d(TAG_SERVICE, "GoalWallpaperService onCreateEngine: assigned engineId=$id")
         return GoalEngine(id)
     }
@@ -73,6 +84,8 @@ class GoalWallpaperService : WallpaperService() {
         private var surfaceWidth = 0
         private var surfaceHeight = 0
         private var isVisibleState = false
+        private var surfaceCreatedTimestamp: Long = 0L
+        private var hasPostedFirstValidFrame = false
 
         // State machine for asynchronous DataStore flow
         private var currentLoadState: GoalLoadState = GoalLoadState.Loading
@@ -112,11 +125,17 @@ class GoalWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder?) {
             super.onCreate(surfaceHolder)
+            Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onCreate: isPreview=$isPreview")
             Log.d(TAG_ENGINE, "Engine[$engineId] onCreate: isPreview=$isPreview")
 
             // Subscribe to DataStore flow. The Engine is completely decoupled from Activity lifecycle
             dataCollectJob = scope.launch {
+                Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] DataStore collection started")
                 repository.goalStateFlow.collect { state ->
+                    Log.d(
+                        TAG_TIMELINE,
+                        "${t()} Engine[$engineId] DataStore ${state::class.simpleName} (ready=$isSurfaceReady, visible=$isVisibleState)"
+                    )
                     Log.d(
                         TAG_ENGINE,
                         "Engine[$engineId] DataStore emitted: ${state::class.simpleName} (ready=$isSurfaceReady, visible=$isVisibleState)"
@@ -136,12 +155,17 @@ class GoalWallpaperService : WallpaperService() {
 
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             super.onSurfaceCreated(holder)
+            surfaceCreatedTimestamp = SystemClock.elapsedRealtime()
             isSurfaceReady = true
             val frame = holder.surfaceFrame
             if (frame != null && frame.width() > 0 && frame.height() > 0) {
                 surfaceWidth = frame.width()
                 surfaceHeight = frame.height()
             }
+            Log.d(
+                TAG_TIMELINE,
+                "${t()} Engine[$engineId].onSurfaceCreated: surface=(${surfaceWidth}x$surfaceHeight), visible=$isVisibleState, preview=$isPreview"
+            )
             Log.d(
                 TAG_ENGINE,
                 "Engine[$engineId] onSurfaceCreated: surface=(${surfaceWidth}x$surfaceHeight), isVisible=$isVisibleState, isPreview=$isPreview"
@@ -160,8 +184,12 @@ class GoalWallpaperService : WallpaperService() {
             surfaceWidth = width
             surfaceHeight = height
             Log.d(
+                TAG_TIMELINE,
+                "${t()} Engine[$engineId].onSurfaceChanged: format=$format, surface=(${width}x$height), visible=$isVisibleState"
+            )
+            Log.d(
                 TAG_ENGINE,
-                "Engine[$engineId] onSurfaceChanged: format=$format, surface=(${width}x$height), isVisible=$isVisibleState"
+                "Engine[$engineId] onSurfaceChanged: format=$format, surface=(${width}x$height), visible=$isVisibleState"
             )
             requestRender("onSurfaceChanged")
         }
@@ -169,6 +197,12 @@ class GoalWallpaperService : WallpaperService() {
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
             isVisibleState = visible
+            val wm = WallpaperManager.getInstance(applicationContext)
+            val info = wm.wallpaperInfo
+            Log.d(
+                TAG_TIMELINE,
+                "${t()} Engine[$engineId].onVisibilityChanged: visible=$visible, wallpaperComponent=${info?.component}, ready=$isSurfaceReady, loadState=${currentLoadState::class.simpleName}"
+            )
             Log.d(
                 TAG_ENGINE,
                 "Engine[$engineId] onVisibilityChanged: visible=$visible, ready=$isSurfaceReady, loadState=${currentLoadState::class.simpleName}, goal='${cachedGoal?.name}'"
@@ -187,6 +221,7 @@ class GoalWallpaperService : WallpaperService() {
         override fun onSurfaceDestroyed(holder: SurfaceHolder?) {
             super.onSurfaceDestroyed(holder)
             isSurfaceReady = false
+            Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onSurfaceDestroyed")
             Log.d(TAG_ENGINE, "Engine[$engineId] onSurfaceDestroyed")
             unregisterTimeReceiver()
             mainHandler.removeCallbacks(midnightRunnable)
@@ -195,6 +230,7 @@ class GoalWallpaperService : WallpaperService() {
         override fun onDestroy() {
             super.onDestroy()
             isSurfaceReady = false
+            Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onDestroy")
             Log.d(TAG_ENGINE, "Engine[$engineId] onDestroy")
             unregisterTimeReceiver()
             mainHandler.removeCallbacksAndMessages(null)
@@ -229,6 +265,10 @@ class GoalWallpaperService : WallpaperService() {
          * immutable state will always be drawn as soon as preconditions are satisfied.
          */
         private fun requestRender(reason: String) {
+            Log.d(
+                TAG_TIMELINE,
+                "${t()} Engine[$engineId] requestRender: reason='$reason', ready=$isSurfaceReady, visible=$isVisibleState, loadState=${currentLoadState::class.simpleName}"
+            )
             Log.d(
                 TAG_ENGINE,
                 "Engine[$engineId] requestRender triggered by '$reason' [ready=$isSurfaceReady, visible=$isVisibleState, preview=$isPreview, loadState=${currentLoadState::class.simpleName}, surface=(${surfaceWidth}x$surfaceHeight)]"
@@ -280,15 +320,19 @@ class GoalWallpaperService : WallpaperService() {
                 "Engine[$engineId] drawFrame: attempt=$attempt, title='${snapshot.titleText}', status=${snapshot.status::class.simpleName}, dots=${snapshot.totalDots}, loadState=${currentLoadState::class.simpleName}"
             )
 
+            Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas START (attempt $attempt)")
             var canvas: Canvas? = null
             try {
                 canvas = holder.lockCanvas()
             } catch (e: Exception) {
+                Log.e(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas EXCEPTION on attempt $attempt: ${e.message}")
                 Log.e(TAG_ENGINE, "Engine[$engineId] Failed to lockCanvas on attempt $attempt", e)
             }
 
             if (canvas != null) {
+                Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas SUCCESS (attempt $attempt)")
                 try {
+                    Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render START (loadState=${currentLoadState::class.simpleName}, dots=${snapshot.totalDots})")
                     renderer.render(
                         canvas = canvas,
                         surfaceWidth = surfaceWidth,
@@ -298,18 +342,29 @@ class GoalWallpaperService : WallpaperService() {
                         snapshot = snapshot,
                         density = density
                     )
+                    Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render END")
                 } catch (e: Exception) {
                     Log.e(TAG_ENGINE, "Engine[$engineId] Error during wallpaper render", e)
                 } finally {
                     try {
                         holder.unlockCanvasAndPost(canvas)
+                        Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] unlockCanvasAndPost completed")
+                        if (!hasPostedFirstValidFrame && currentLoadState is GoalLoadState.Loaded) {
+                            hasPostedFirstValidFrame = true
+                            val now = SystemClock.elapsedRealtime()
+                            val fromSurface = if (surfaceCreatedTimestamp > 0L) "${now - surfaceCreatedTimestamp}ms" else "N/A"
+                            Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] FIRST VALID FRAME POSTED (timeFromSurfaceCreated=$fromSurface)")
+                        }
                     } catch (e: Exception) {
+                        Log.e(TAG_TIMELINE, "${t()} Engine[$engineId] unlockCanvasAndPost FAILED: ${e.message}")
                         Log.e(TAG_ENGINE, "Engine[$engineId] Failed to unlockCanvasAndPost", e)
                     }
                 }
             } else {
+                Log.w(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas NULL (attempt $attempt)")
                 // If lockCanvas failed (e.g. keyguard transition or surface allocation race), retry
                 if (attempt < 3 && isSurfaceReady && (isVisibleState || isPreview)) {
+                    Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] Scheduling lockCanvas retry ${attempt + 1} in 100ms")
                     Log.d(TAG_ENGINE, "Engine[$engineId] Scheduling retry $attempt in 100ms")
                     mainHandler.postDelayed({
                         if (isSurfaceReady && (isVisibleState || isPreview)) {
