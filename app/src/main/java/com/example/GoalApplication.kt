@@ -28,7 +28,12 @@ class GoalApplication : Application() {
         super.onCreate()
         instance = this
         processStartTime = SystemClock.elapsedRealtime()
-        com.example.diagnostics.DiagnosticRecorder.log("PROCESS_START", "pid=${Process.myPid()}, time=$processStartTime")
-        Log.d("GOAL_TIMELINE", "[+0ms] PROCESS START: pid=${Process.myPid()}, time=$processStartTime")
+        val procName = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            Application.getProcessName()
+        } else {
+            "pid=${Process.myPid()}"
+        }
+        com.example.diagnostics.DiagnosticRecorder.log("PROCESS_START", "process=$procName, pid=${Process.myPid()}, time=$processStartTime")
+        Log.d("GOAL_TIMELINE", "[+0ms] PROCESS START: process=$procName, pid=${Process.myPid()}, time=$processStartTime")
     }
 }

@@ -33,7 +33,12 @@ object DiagnosticRecorder {
         val nowMs = SystemClock.elapsedRealtime()
         val wallTime = dateFormat.format(Date())
         val pid = Process.myPid()
-        val line = "[$wallTime | +${nowMs}ms | PID:$pid] $event ${if (details.isNotEmpty()) ":: $details" else ""}"
+        val procName = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            android.app.Application.getProcessName()
+        } else {
+            "PID:$pid"
+        }
+        val line = "[$wallTime | +${nowMs}ms | proc:$procName | PID:$pid] $event ${if (details.isNotEmpty()) ":: $details" else ""}"
 
         Log.d(TAG, line)
 

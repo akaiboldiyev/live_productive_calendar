@@ -116,11 +116,16 @@ class GoalWallpaperService : WallpaperService() {
             }
         }
 
-        // Broadcast receiver for system date, time, and timezone changes
+        // Broadcast receiver for system date, time, and timezone changes + multi-process goal updates
         private val timeChangedReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (isVisibleState) {
-                    Log.d(TAG_ENGINE, "Engine[$engineId] Time/Date broadcast received (${intent?.action})")
+                val action = intent?.action
+                com.example.diagnostics.DiagnosticRecorder.log("BROADCAST_RECEIVED", "action=$action, visible=$isVisibleState")
+                if (action == GoalRepository.ACTION_GOAL_UPDATED) {
+                    Log.d(TAG_ENGINE, "Engine[$engineId] Goal updated broadcast received from UI process")
+                    requestRender("goalUpdatedBroadcast")
+                } else if (isVisibleState) {
+                    Log.d(TAG_ENGINE, "Engine[$engineId] Time/Date broadcast received ($action)")
                     requestRender("systemTimeChanged")
                 }
             }
@@ -448,6 +453,7 @@ class GoalWallpaperService : WallpaperService() {
                     addAction(Intent.ACTION_TIME_CHANGED)
                     addAction(Intent.ACTION_TIMEZONE_CHANGED)
                     addAction(Intent.ACTION_LOCALE_CHANGED)
+                    addAction(GoalRepository.ACTION_GOAL_UPDATED)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     registerReceiver(timeChangedReceiver, filter, Context.RECEIVER_NOT_EXPORTED)

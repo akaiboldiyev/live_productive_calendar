@@ -1,28 +1,34 @@
 package com.example.data
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.createMultiProcessCoordinator
+import androidx.datastore.core.okio.OkioStorage
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.PreferencesSerializer
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
 import com.example.model.GoalData
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.map
+import okio.FileSystem
+import okio.Path.Companion.toOkioPath
+import java.io.File
 import java.io.IOException
 import java.time.LocalDate
-
-val Context.goalDataStore: DataStore<Preferences> by preferencesDataStore(name = "goal_preferences")
 
 sealed interface GoalLoadState {
     object Loading : GoalLoadState
@@ -36,6 +42,7 @@ class GoalRepository(private val context: Context) {
     companion object {
         private const val TAG_DATASTORE = "GOAL_DATASTORE"
         private const val TAG_SAVE = "GOAL_SAVE"
+        const val ACTION_GOAL_UPDATED = "com.aistudio.goaldots.ACTION_GOAL_UPDATED"
 
         private val KEY_GOAL_NAME = stringPreferencesKey("goal_name")
         private val KEY_START_DATE = stringPreferencesKey("start_date")
@@ -49,12 +56,49 @@ class GoalRepository(private val context: Context) {
         @Volatile
         private var INSTANCE: GoalRepository? = null
 
+        @Volatile
+        private var multiProcessDataStore: DataStore<Preferences>? = null
+
+        /**
+         * Creates a true AndroidX Multi-Process DataStore using OkioStorage with
+         * createMultiProcessCoordinator and PreferencesSerializer.
+         * Guarantees file locks, inter-process update notifications, and cross-process
+         * transactional read/write consistency between the main app process and :wallpaper process.
+         */
+        fun getDataStore(context: Context): DataStore<Preferences> {
+            return multiProcessDataStore ?: synchronized(this) {
+                multiProcessDataStore ?: run {
+                    val appContext = context.applicationContext
+                    val file = File(appContext.filesDir, "datastore/goal_preferences.preferences_pb")
+                    file.parentFile?.mkdirs()
+
+                    val storage = OkioStorage<Preferences>(
+                        fileSystem = FileSystem.SYSTEM,
+                        serializer = PreferencesSerializer,
+                        coordinatorProducer = { _, _ ->
+                            createMultiProcessCoordinator(
+                                context = Dispatchers.IO,
+                                file = file
+                            )
+                        },
+                        producePath = { file.toOkioPath() }
+                    )
+
+                    PreferenceDataStoreFactory.create(
+                        storage = storage
+                    ).also { multiProcessDataStore = it }
+                }
+            }
+        }
+
         fun getInstance(context: Context): GoalRepository {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: GoalRepository(context.applicationContext).also { INSTANCE = it }
             }
         }
     }
+
+    private val dataStore = getDataStore(context)
 
     /**
      * Rich state flow explicitly distinguishing Loading, NoGoal, Loaded, and Error states.
@@ -68,7 +112,7 @@ class GoalRepository(private val context: Context) {
         Log.d("GOAL_TIMELINE", "[+${com.example.GoalApplication.elapsedSinceProcessStart()}ms] DataStore emitting GoalLoadState.Loading")
         emit(GoalLoadState.Loading)
         emitAll(
-            context.goalDataStore.data
+            dataStore.data
                 .catch { exception ->
                     if (exception is IOException) {
                         Log.e(TAG_DATASTORE, "IOException reading preferences, emitting emptyPreferences", exception)
@@ -148,7 +192,7 @@ class GoalRepository(private val context: Context) {
             TAG_SAVE,
             "saveGoal starting DataStore edit: name='${goal.name}', start=${goal.startDate}, end=${goal.endDate}, theme=${goal.settings.themeId}"
         )
-        context.goalDataStore.edit { preferences ->
+        dataStore.edit { preferences ->
             preferences[KEY_GOAL_NAME] = goal.name.trim()
             preferences[KEY_START_DATE] = goal.startDate.toString()
             preferences[KEY_END_DATE] = goal.endDate.toString()
@@ -159,14 +203,26 @@ class GoalRepository(private val context: Context) {
             preferences[KEY_VERTICAL_BIAS] = goal.settings.verticalBias
         }
         Log.d(TAG_SAVE, "saveGoal DataStore edit completed successfully for '${goal.name}'")
+        try {
+            val intent = Intent(ACTION_GOAL_UPDATED).setPackage(context.packageName)
+            context.sendBroadcast(intent)
+        } catch (e: Exception) {
+            Log.e(TAG_SAVE, "Failed to send update broadcast", e)
+        }
     }
 
     suspend fun clearGoal() {
         Log.d(TAG_SAVE, "clearGoal called - clearing all preferences")
-        context.goalDataStore.edit { preferences ->
+        dataStore.edit { preferences ->
             preferences.clear()
         }
         Log.d(TAG_SAVE, "clearGoal completed")
+        try {
+            val intent = Intent(ACTION_GOAL_UPDATED).setPackage(context.packageName)
+            context.sendBroadcast(intent)
+        } catch (e: Exception) {
+            Log.e(TAG_SAVE, "Failed to send update broadcast", e)
+        }
     }
 
     suspend fun getGoalSnapshotSync(): GoalData? {

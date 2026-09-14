@@ -75,20 +75,27 @@ set /a SNAPSHOT_COUNT+=1
 set "PADDED_INDEX=0000%SNAPSHOT_COUNT%"
 set "PADDED_INDEX=!PADDED_INDEX:~-4!"
 
-set "CURRENT_PID="
-for /f "usebackq delims=" %%P in (`adb shell pidof %APP_ID% 2^>nul`) do (
-    set "CURRENT_PID=%%P"
+set "MAIN_PID="
+for /f "usebackq delims=" %%P in (`adb shell "pidof %APP_ID%" 2^>nul`) do (
+    set "MAIN_PID=%%P"
 )
-if not defined CURRENT_PID set "CURRENT_PID=NOT_RUNNING"
+if not defined MAIN_PID set "MAIN_PID=NOT_RUNNING"
 
-set "PREFIX=%OUTDIR%\snap_!PADDED_INDEX!_PID_!CURRENT_PID!"
+set "WALLPAPER_PID="
+for /f "usebackq delims=" %%P in (`adb shell "pidof %APP_ID%:wallpaper" 2^>nul`) do (
+    set "WALLPAPER_PID=%%P"
+)
+if not defined WALLPAPER_PID set "WALLPAPER_PID=NOT_RUNNING"
 
-echo [!TIME!] Snapshot #!PADDED_INDEX! -- PID: !CURRENT_PID!
+set "PREFIX=%OUTDIR%\snap_!PADDED_INDEX!_MAIN_!MAIN_PID!_WALLPAPER_!WALLPAPER_PID!"
+
+echo [!TIME!] Snapshot #!PADDED_INDEX! -- Main PID: !MAIN_PID! | Wallpaper PID: !WALLPAPER_PID!
 
 (
     echo SNAPSHOT: !PADDED_INDEX!
     echo TIMESTAMP: !DATE! !TIME!
-    echo PID: !CURRENT_PID!
+    echo MAIN_PROCESS_PID: !MAIN_PID!
+    echo WALLPAPER_PROCESS_PID: !WALLPAPER_PID!
 ) > "!PREFIX!_info.txt" 2>nul
 
 adb shell dumpsys wallpaper > "!PREFIX!_dumpsys_wallpaper.txt" 2>nul
