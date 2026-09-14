@@ -1,0 +1,6 @@
+{
+  "name": "Goal Dots",
+  "description": "Dynamic countdown dots live wallpaper for tracking your goals day by day directly on your wallpaper.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,219 @@
+package com.example.ui
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.data.GoalRepository
+import com.example.model.AppearanceSettings
+import com.example.model.ColorTheme
+import com.example.model.GoalData
+import com.example.model.GoalProgressCalculator
+import com.example.model.GoalSnapshot
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import java.time.LocalDate
+
+data class GoalUiState(
+    val goalName: String = "",
+    val startDate: LocalDate = LocalDate.now(),
+    val endDate: LocalDate = LocalDate.now().plusDays(179), // 180 days default
+    val themeId: String = ColorTheme.OBSIDIAN_CORAL.id,
+    val showPercentage: Boolean = true,
+    val showRemainingDays: Boolean = true,
+    val showStatusHeader: Boolean = true,
+    val verticalBias: Float = 0.5f,
+    val isSaved: Boolean = false,
+    val validationError: String? = null,
+    val showSaveSuccessMessage: Boolean = false,
+    val showLockscreenOverlay: Boolean = false
+) {
+    val totalDays: Int
+        get() = GoalProgressCalculator.calculateTotalDays(startDate, endDate)
+
+    val currentGoalData: GoalData?
+        get() = if (goalName.trim().isNotEmpty() && totalDays in GoalProgressCalculator.MIN_DAYS..GoalProgressCalculator.MAX_DAYS) {
+            GoalData(
+                name = goalName.trim(),
+                startDate = startDate,
+                endDate = endDate,
+                settings = AppearanceSettings(
+                    themeId = themeId,
+                    showPercentage = showPercentage,
+                    showRemainingDays = showRemainingDays,
+                    showStatusHeader = showStatusHeader,
+                    verticalBias = verticalBias
+                )
+            )
+        } else null
+
+    val snapshot: GoalSnapshot
+        get() = GoalProgressCalculator.computeSnapshot(currentGoalData, LocalDate.now())
+}
+
+class GoalViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository = GoalRepository.getInstance(application)
+
+    private val _uiState = MutableStateFlow(GoalUiState())
+    val uiState: StateFlow<GoalUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.goalFlow.collect { savedGoal ->
+                if (savedGoal != null) {
+                    _uiState.update { current ->
+                        current.copy(
+                            goalName = savedGoal.name,
+                            startDate = savedGoal.startDate,
+                            endDate = savedGoal.endDate,
+                            themeId = savedGoal.settings.themeId,
+                            showPercentage = savedGoal.settings.showPercentage,
+                            showRemainingDays = savedGoal.settings.showRemainingDays,
+                            showStatusHeader = savedGoal.settings.showStatusHeader,
+                            verticalBias = savedGoal.settings.verticalBias,
+                            isSaved = true,
+                            validationError = null
+                        )
+                    }
+                } else {
+                    // Set default sample goal for great first-time onboarding
+                    _uiState.update { current ->
+                        current.copy(
+                            goalName = "Build a profitable startup",
+                            startDate = LocalDate.now(),
+                            endDate = LocalDate.now().plusDays(179),
+                            isSaved = false
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun updateName(name: String) {
+        _uiState.update { it.copy(goalName = name, showSaveSuccessMessage = false) }
+        validate()
+    }
+
+    fun updateStartDate(newStart: LocalDate) {
+        _uiState.update { current ->
+            var newEnd = current.endDate
+            if (newEnd.isBefore(newStart)) {
+                newEnd = newStart
+            }
+            // Max allowed 365 inclusive days: start + 364 days
+            val maxAllowedEnd = GoalProgressCalculator.getMaxEndDate(newStart)
+            if (newEnd.isAfter(maxAllowedEnd)) {
+                newEnd = maxAllowedEnd
+            }
+            current.copy(
+                startDate = newStart,
+                endDate = newEnd,
+                showSaveSuccessMessage = false
+            )
+        }
+        validate()
+    }
+
+    fun updateEndDate(newEnd: LocalDate) {
+        _uiState.update { it.copy(endDate = newEnd, showSaveSuccessMessage = false) }
+        validate()
+    }
+
+    fun setQuickDuration(days: Int) {
+        val clampedDays = days.coerceIn(1, GoalProgressCalculator.MAX_DAYS)
+        _uiState.update { current ->
+            current.copy(
+                endDate = current.startDate.plusDays((clampedDays - 1).toLong()),
+                showSaveSuccessMessage = false
+            )
+        }
+        validate()
+    }
+
+    fun updateTheme(themeId: String) {
+        _uiState.update { it.copy(themeId = themeId, showSaveSuccessMessage = false) }
+        autoSaveIfAlreadyConfigured()
+    }
+
+    fun updateVerticalBias(bias: Float) {
+        _uiState.update { it.copy(verticalBias = bias.coerceIn(0f, 1f), showSaveSuccessMessage = false) }
+        autoSaveIfAlreadyConfigured()
+    }
+
+    fun toggleShowHeader(enabled: Boolean) {
+        _uiState.update { it.copy(showStatusHeader = enabled, showSaveSuccessMessage = false) }
+        autoSaveIfAlreadyConfigured()
+    }
+
+    fun toggleShowPercentage(enabled: Boolean) {
+        _uiState.update { it.copy(showPercentage = enabled, showSaveSuccessMessage = false) }
+        autoSaveIfAlreadyConfigured()
+    }
+
+    fun toggleShowRemaining(enabled: Boolean) {
+        _uiState.update { it.copy(showRemainingDays = enabled, showSaveSuccessMessage = false) }
+        autoSaveIfAlreadyConfigured()
+    }
+
+    fun toggleLockscreenOverlay() {
+        _uiState.update { it.copy(showLockscreenOverlay = !it.showLockscreenOverlay) }
+    }
+
+    fun dismissSaveSuccess() {
+        _uiState.update { it.copy(showSaveSuccessMessage = false) }
+    }
+
+    private fun validate(): Boolean {
+        val state = _uiState.value
+        val result = GoalProgressCalculator.validateGoal(
+            state.goalName,
+            state.startDate,
+            state.endDate
+        )
+        val errorMsg = when (result) {
+            is GoalProgressCalculator.ValidationResult.Valid -> null
+            is GoalProgressCalculator.ValidationResult.Error -> result.message
+        }
+        _uiState.update { it.copy(validationError = errorMsg) }
+        return errorMsg == null
+    }
+
+    fun saveGoal(): Boolean {
+        if (!validate()) return false
+        val state = _uiState.value
+        val goal = state.currentGoalData ?: return false
+
+        viewModelScope.launch {
+            repository.saveGoal(goal)
+            _uiState.update { it.copy(isSaved = true, showSaveSuccessMessage = true) }
+        }
+        return true
+    }
+
+    private fun autoSaveIfAlreadyConfigured() {
+        if (_uiState.value.isSaved) {
+            val goal = _uiState.value.currentGoalData ?: return
+            viewModelScope.launch {
+                repository.saveGoal(goal)
+            }
+        }
+    }
+
+    fun resetGoal() {
+        viewModelScope.launch {
+            repository.clearGoal()
+            _uiState.update {
+                GoalUiState(
+                    goalName = "",
+                    startDate = LocalDate.now(),
+                    endDate = LocalDate.now().plusDays(179),
+                    isSaved = false
+                )
+            }
+        }
+    }
+}
