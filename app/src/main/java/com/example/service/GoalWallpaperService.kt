@@ -55,18 +55,21 @@ class GoalWallpaperService : WallpaperService() {
         super.onCreate()
         val wm = WallpaperManager.getInstance(applicationContext)
         val info = wm.wallpaperInfo
+        com.example.diagnostics.DiagnosticRecorder.log("WALLPAPERSERVICE_ONCREATE", "activeComponent=${info?.component}")
         Log.d(TAG_TIMELINE, "${t()} WallpaperService.onCreate: currentActiveWallpaper=${info?.component}")
         Log.d(TAG_SERVICE, "GoalWallpaperService onCreate: process restarted/created")
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        com.example.diagnostics.DiagnosticRecorder.log("WALLPAPERSERVICE_ONDESTROY")
         Log.d(TAG_TIMELINE, "${t()} WallpaperService.onDestroy")
         Log.d(TAG_SERVICE, "GoalWallpaperService onDestroy")
     }
 
     override fun onCreateEngine(): Engine {
         val id = engineSequence.incrementAndGet()
+        com.example.diagnostics.DiagnosticRecorder.log("WALLPAPERSERVICE_ONCREATEENGINE", "engineId=$id")
         Log.d(TAG_TIMELINE, "${t()} WallpaperService.onCreateEngine: assigned engineId=$id")
         Log.d(TAG_SERVICE, "GoalWallpaperService onCreateEngine: assigned engineId=$id")
         return GoalEngine(id)
@@ -125,13 +128,20 @@ class GoalWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder?) {
             super.onCreate(surfaceHolder)
+            com.example.diagnostics.DiagnosticRecorder.log("ENGINE_ONCREATE", "engineId=$engineId, isPreview=$isPreview")
             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onCreate: isPreview=$isPreview")
             Log.d(TAG_ENGINE, "Engine[$engineId] onCreate: isPreview=$isPreview")
 
             // Subscribe to DataStore flow. The Engine is completely decoupled from Activity lifecycle
             dataCollectJob = scope.launch {
                 Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] DataStore collection started")
+                com.example.diagnostics.DiagnosticRecorder.log("DATASTORE_COLLECT_START", "engineId=$engineId")
                 repository.goalStateFlow.collect { state ->
+                    com.example.diagnostics.DiagnosticRecorder.log(
+                        "DATASTORE_EMIT",
+                        "engineId=$engineId, state=${state::class.simpleName}, isReady=$isSurfaceReady, isVisible=$isVisibleState"
+                    )
+                    com.example.diagnostics.DiagnosticRecorder.updateState("Engine[$engineId]: ${state::class.simpleName}")
                     Log.d(
                         TAG_TIMELINE,
                         "${t()} Engine[$engineId] DataStore ${state::class.simpleName} (ready=$isSurfaceReady, visible=$isVisibleState)"
@@ -162,6 +172,10 @@ class GoalWallpaperService : WallpaperService() {
                 surfaceWidth = frame.width()
                 surfaceHeight = frame.height()
             }
+            com.example.diagnostics.DiagnosticRecorder.log(
+                "SURFACE_CREATED",
+                "engineId=$engineId, dim=(${surfaceWidth}x$surfaceHeight), visible=$isVisibleState, preview=$isPreview"
+            )
             Log.d(
                 TAG_TIMELINE,
                 "${t()} Engine[$engineId].onSurfaceCreated: surface=(${surfaceWidth}x$surfaceHeight), visible=$isVisibleState, preview=$isPreview"
@@ -183,6 +197,10 @@ class GoalWallpaperService : WallpaperService() {
             isSurfaceReady = true
             surfaceWidth = width
             surfaceHeight = height
+            com.example.diagnostics.DiagnosticRecorder.log(
+                "SURFACE_CHANGED",
+                "engineId=$engineId, format=$format, dim=(${width}x$height), visible=$isVisibleState"
+            )
             Log.d(
                 TAG_TIMELINE,
                 "${t()} Engine[$engineId].onSurfaceChanged: format=$format, surface=(${width}x$height), visible=$isVisibleState"
@@ -199,6 +217,10 @@ class GoalWallpaperService : WallpaperService() {
             isVisibleState = visible
             val wm = WallpaperManager.getInstance(applicationContext)
             val info = wm.wallpaperInfo
+            com.example.diagnostics.DiagnosticRecorder.log(
+                "VISIBILITY_CHANGED",
+                "engineId=$engineId, visible=$visible, activeWall=${info?.component}, ready=$isSurfaceReady, loadState=${currentLoadState::class.simpleName}"
+            )
             Log.d(
                 TAG_TIMELINE,
                 "${t()} Engine[$engineId].onVisibilityChanged: visible=$visible, wallpaperComponent=${info?.component}, ready=$isSurfaceReady, loadState=${currentLoadState::class.simpleName}"
@@ -221,6 +243,7 @@ class GoalWallpaperService : WallpaperService() {
         override fun onSurfaceDestroyed(holder: SurfaceHolder?) {
             super.onSurfaceDestroyed(holder)
             isSurfaceReady = false
+            com.example.diagnostics.DiagnosticRecorder.log("SURFACE_DESTROYED", "engineId=$engineId")
             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onSurfaceDestroyed")
             Log.d(TAG_ENGINE, "Engine[$engineId] onSurfaceDestroyed")
             unregisterTimeReceiver()
@@ -230,6 +253,7 @@ class GoalWallpaperService : WallpaperService() {
         override fun onDestroy() {
             super.onDestroy()
             isSurfaceReady = false
+            com.example.diagnostics.DiagnosticRecorder.log("ENGINE_ONDESTROY", "engineId=$engineId")
             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onDestroy")
             Log.d(TAG_ENGINE, "Engine[$engineId] onDestroy")
             unregisterTimeReceiver()
@@ -321,15 +345,19 @@ class GoalWallpaperService : WallpaperService() {
             )
 
             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas START (attempt $attempt)")
+            com.example.diagnostics.DiagnosticRecorder.markRender()
+            com.example.diagnostics.DiagnosticRecorder.log("LOCK_CANVAS_START", "engineId=$engineId, attempt=$attempt")
             var canvas: Canvas? = null
             try {
                 canvas = holder.lockCanvas()
             } catch (e: Exception) {
+                com.example.diagnostics.DiagnosticRecorder.log("LOCK_CANVAS_EXCEPTION", "engineId=$engineId, attempt=$attempt, err=${e.message}")
                 Log.e(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas EXCEPTION on attempt $attempt: ${e.message}")
                 Log.e(TAG_ENGINE, "Engine[$engineId] Failed to lockCanvas on attempt $attempt", e)
             }
 
             if (canvas != null) {
+                com.example.diagnostics.DiagnosticRecorder.log("LOCK_CANVAS_SUCCESS", "engineId=$engineId, attempt=$attempt")
                 Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas SUCCESS (attempt $attempt)")
                 try {
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render START (loadState=${currentLoadState::class.simpleName}, dots=${snapshot.totalDots})")
@@ -344,23 +372,32 @@ class GoalWallpaperService : WallpaperService() {
                     )
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render END")
                 } catch (e: Exception) {
+                    com.example.diagnostics.DiagnosticRecorder.log("RENDER_EXCEPTION", "engineId=$engineId, err=${e.message}")
                     Log.e(TAG_ENGINE, "Engine[$engineId] Error during wallpaper render", e)
                 } finally {
                     try {
                         holder.unlockCanvasAndPost(canvas)
+                        com.example.diagnostics.DiagnosticRecorder.log("UNLOCK_CANVAS_POST", "engineId=$engineId")
                         Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] unlockCanvasAndPost completed")
                         if (!hasPostedFirstValidFrame && currentLoadState is GoalLoadState.Loaded) {
                             hasPostedFirstValidFrame = true
                             val now = SystemClock.elapsedRealtime()
                             val fromSurface = if (surfaceCreatedTimestamp > 0L) "${now - surfaceCreatedTimestamp}ms" else "N/A"
+                            com.example.diagnostics.DiagnosticRecorder.markValidFrame()
+                            com.example.diagnostics.DiagnosticRecorder.log(
+                                "FIRST_VALID_FRAME_POSTED",
+                                "engineId=$engineId, timeFromSurface=$fromSurface, title='${snapshot.titleText}'"
+                            )
                             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] FIRST VALID FRAME POSTED (timeFromSurfaceCreated=$fromSurface)")
                         }
                     } catch (e: Exception) {
+                        com.example.diagnostics.DiagnosticRecorder.log("UNLOCK_CANVAS_FAILED", "engineId=$engineId, err=${e.message}")
                         Log.e(TAG_TIMELINE, "${t()} Engine[$engineId] unlockCanvasAndPost FAILED: ${e.message}")
                         Log.e(TAG_ENGINE, "Engine[$engineId] Failed to unlockCanvasAndPost", e)
                     }
                 }
             } else {
+                com.example.diagnostics.DiagnosticRecorder.log("LOCK_CANVAS_NULL", "engineId=$engineId, attempt=$attempt")
                 Log.w(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas NULL (attempt $attempt)")
                 // If lockCanvas failed (e.g. keyguard transition or surface allocation race), retry
                 if (attempt < 3 && isSurfaceReady && (isVisibleState || isPreview)) {

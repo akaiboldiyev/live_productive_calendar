@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -84,6 +85,7 @@ fun GoalDotsApp(
     val scope = rememberCoroutineScope()
 
     var showInfoDialog by remember { mutableStateOf(false) }
+    var showDiagnosticDialog by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.showSaveSuccessMessage) {
@@ -125,6 +127,16 @@ fun GoalDotsApp(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showDiagnosticDialog = true },
+                        modifier = Modifier.testTag("diagnostics_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BugReport,
+                            contentDescription = "Diagnostics",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     IconButton(
                         onClick = { showInfoDialog = true },
                         modifier = Modifier.testTag("help_button")
@@ -342,6 +354,13 @@ fun GoalDotsApp(
     // Info & OEM Guide Dialog
     if (showInfoDialog) {
         OemInfoDialog(onDismissRequest = { showInfoDialog = false })
+    }
+
+    // Diagnostic Recorder Dialog
+    if (showDiagnosticDialog) {
+        com.example.ui.components.DiagnosticDialog(
+            onDismissRequest = { showDiagnosticDialog = false }
+        )
     }
 
     // Reset Confirmation Dialog

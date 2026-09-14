@@ -61,8 +61,10 @@ class GoalRepository(private val context: Context) {
      * Prevents false "No Goal Active" flashes on initial app startup or wallpaper engine creation.
      */
     val goalStateFlow: Flow<GoalLoadState> = flow {
+        com.example.diagnostics.DiagnosticRecorder.log("DATASTORE_FLOW_START", "reading preferences")
         Log.d("GOAL_TIMELINE", "[+${com.example.GoalApplication.elapsedSinceProcessStart()}ms] DataStore flow collection started -> loading preferences")
         Log.d(TAG_DATASTORE, "DataStore flow collection started -> loading preferences")
+        com.example.diagnostics.DiagnosticRecorder.log("DATASTORE_EMIT_LOADING")
         Log.d("GOAL_TIMELINE", "[+${com.example.GoalApplication.elapsedSinceProcessStart()}ms] DataStore emitting GoalLoadState.Loading")
         emit(GoalLoadState.Loading)
         emitAll(
@@ -87,6 +89,7 @@ class GoalRepository(private val context: Context) {
                     )
 
                     if (rawName.isNullOrBlank() || rawStart.isNullOrBlank() || rawEnd.isNullOrBlank()) {
+                        com.example.diagnostics.DiagnosticRecorder.log("DATASTORE_EMIT_NO_GOAL")
                         Log.d("GOAL_TIMELINE", "[+${com.example.GoalApplication.elapsedSinceProcessStart()}ms] DataStore emitted GoalLoadState.NoGoal")
                         Log.d(TAG_DATASTORE, "DataStore has no complete goal -> emitting GoalLoadState.NoGoal")
                         return@map GoalLoadState.NoGoal
@@ -119,6 +122,7 @@ class GoalRepository(private val context: Context) {
                         )
                     )
 
+                    com.example.diagnostics.DiagnosticRecorder.log("DATASTORE_EMIT_LOADED", "goalName='${goal.name}'")
                     Log.d("GOAL_TIMELINE", "[+${com.example.GoalApplication.elapsedSinceProcessStart()}ms] DataStore emitted GoalLoadState.Loaded: name='${goal.name}'")
                     Log.d(
                         TAG_DATASTORE,
