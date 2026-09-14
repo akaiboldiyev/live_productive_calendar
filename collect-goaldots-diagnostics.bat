@@ -1,116 +1,100 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
 REM ==============================================================================
 REM Goal Dots Automated Diagnostic Collector for Xiaomi HyperOS / POCO X8 Pro
 REM Package: com.aistudio.goaldots.wkqn
-REM Service: com.aistudio.goaldots.wkqn/com.example.service.GoalWallpaperService
 REM ==============================================================================
 
-set APP_ID=com.aistudio.goaldots.wkqn
-set WALLPAPER_SERVICE=%APP_ID%/com.example.service.GoalWallpaperService
+set "APP_ID=com.aistudio.goaldots.wkqn"
 
-echo [1/4] Checking ADB connection...
-where adb >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] 'adb' not found in PATH!
-    echo Please make sure Android SDK platform-tools is installed and in PATH,
-    echo or place this script in your platform-tools folder.
+echo [1/3] Checking ADB connection...
+where adb >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] 'adb' was not found in PATH!
+    echo Please make sure Android platform-tools is in PATH or run from that directory.
     pause
     exit /b 1
 )
 
 for /f "tokens=1,2" %%A in ('adb devices ^| findstr /v "List of devices attached" ^| findstr /r "[a-zA-Z0-9]"') do (
     if "%%B"=="device" (
-        set DEVICE_SERIAL=%%A
+        set "DEVICE_SERIAL=%%A"
         goto :device_found
     )
 )
 
-echo [ERROR] No connected device in 'device' state found!
-echo Please make sure:
-echo  1. Phone is connected via USB.
-echo  2. USB debugging is enabled in Developer Options.
-echo  3. You accepted the computer authorization on phone screen.
+echo [ERROR] No connected Android device found!
+echo Ensure USB debugging is ON and device is authorized.
 pause
 exit /b 1
 
 :device_found
-echo Device detected: %DEVICE_SERIAL%
+echo Device connected: %DEVICE_SERIAL%
 
-set TIMESTAMP=%DATE:~6,4%%DATE:~3,2%%DATE:~0,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%
-set TIMESTAMP=%TIMESTAMP: =0%
-set OUTDIR=diagnostics_%TIMESTAMP%
-mkdir "%OUTDIR%"
+REM Safe timestamp generation for Windows CMD without localized date slash errors
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul') do set "DATETIME_RAW=%%I"
+if not defined DATETIME_RAW (
+    set "SAFE_STAMP=%RANDOM%"
+) else (
+    set "SAFE_STAMP=%DATETIME_RAW:~0,8%_%DATETIME_RAW:~8,6%"
+)
 
-echo.
-echo ==============================================================================
+set "OUTDIR=diagnostics_%SAFE_STAMP%"
+mkdir "%OUTDIR%" 2>nul
+
 echo Target Application: %APP_ID%
-echo Saving outputs to:  %OUTDIR%
-echo ==============================================================================
+echo Output Directory:  %OUTDIR%
 echo.
 
-echo [2/4] Starting logcat capture in background...
+echo [2/3] Starting continuous logcat capture to %OUTDIR%\logcat_stream.txt...
 adb logcat -c
-start "GoalDots Logcat" /B cmd /c "adb logcat -v time > %OUTDIR%\logcat_stream.txt"
+start "GoalDots_Logcat_Session" /B adb logcat -v time > "%OUTDIR%\logcat_stream.txt"
 
-echo [3/4] Diagnostic session is RUNNING.
 echo.
 echo ==============================================================================
-echo INSTRUCTIONS:
-echo 1. Open Goal Dots on your phone and ensure goal is displayed.
-echo 2. Reproduce the scenario:
-echo    - State A: Normal working state.
-echo    - State B: Swipe Goal Dots from Recent Apps (screen on).
-echo    - State C: Lock screen (Power button) - wait 3s - unlock.
-echo    - State D: Open app again - swipe from Recents - lock - unlock (Failure).
+echo [3/3] DIAGNOSTIC SESSION IS NOW ACTIVE AND RECORDING!
 echo.
-echo The script will record continuous snapshots (PID, dumpsys wallpaper, services)
-echo automatically every 2 seconds into %OUTDIR%.
+echo The script will record state snapshots (PID, dumpsys wallpaper, services)
+echo continuously every 2 seconds into '%OUTDIR%'.
 echo.
-echo Press Ctrl+C in this window or press ANY KEY to STOP recording and pack results.
+echo REPRODUCE YOUR SCENARIO NOW:
+echo  1. STATE A: Check working live wallpaper.
+echo  2. STATE B: Swipe Goal Dots card from Recent Apps.
+echo  3. STATE C: Lock screen (Power button) -> wait 3s -> unlock.
+echo  4. STATE D: Open app -> swipe from Recents -> lock/unlock (Complete failure).
+echo.
+echo *** WHEN FINISHED: PRESS Ctrl+C IN THIS WINDOW TO STOP ***
 echo ==============================================================================
 echo.
 
-set SNAPSHOT_NUM=0
+set /a SNAPSHOT_COUNT=0
 
 :loop
-set /a SNAPSHOT_NUM+=1
-set PADDED_NUM=000%SNAPSHOT_NUM%
-set PADDED_NUM=%PADDED_NUM:~-3%
+set /a SNAPSHOT_COUNT+=1
+set "PADDED_INDEX=0000%SNAPSHOT_COUNT%"
+set "PADDED_INDEX=!PADDED_INDEX:~-4!"
 
-for /f "delims=" %%P in ('adb shell pidof %APP_ID% 2^>nul') do set CURRENT_PID=%%P
-if "%CURRENT_PID%"=="" set CURRENT_PID=DEAD_OR_NOT_RUNNING
+set "CURRENT_PID="
+for /f "usebackq delims=" %%P in (`adb shell pidof %APP_ID% 2^>nul`) do (
+    set "CURRENT_PID=%%P"
+)
+if not defined CURRENT_PID set "CURRENT_PID=NOT_RUNNING"
 
-set SNAP_PREFIX=%OUTDIR%\snap_%PADDED_NUM%_PID_%CURRENT_PID%
+set "PREFIX=%OUTDIR%\snap_!PADDED_INDEX!_PID_!CURRENT_PID!"
 
-echo [%TIME%] Snapshot #%PADDED_NUM% - PID: %CURRENT_PID%
-echo PID: %CURRENT_PID% > "%SNAP_PREFIX%_summary.txt"
-echo TIME: %DATE% %TIME% >> "%SNAP_PREFIX%_summary.txt"
+echo [!TIME!] Snapshot #!PADDED_INDEX! -- PID: !CURRENT_PID!
 
-adb shell dumpsys wallpaper > "%SNAP_PREFIX%_dumpsys_wallpaper.txt" 2>nul
-adb shell dumpsys activity services %APP_ID% > "%SNAP_PREFIX%_dumpsys_services.txt" 2>nul
+(
+    echo SNAPSHOT: !PADDED_INDEX!
+    echo TIMESTAMP: !DATE! !TIME!
+    echo PID: !CURRENT_PID!
+) > "!PREFIX!_info.txt" 2>nul
 
-choice /T 2 /D Y /N >nul 2>nul
-if %errorlevel% neq 1 goto :loop
+adb shell dumpsys wallpaper > "!PREFIX!_dumpsys_wallpaper.txt" 2>nul
+adb shell "dumpsys activity services %APP_ID%" > "!PREFIX!_dumpsys_services.txt" 2>nul
 
-:finish
-echo.
-echo [4/4] Stopping logcat and collecting in-app diagnostic log...
-taskkill /FI "WINDOWTITLE eq GoalDots Logcat*" /F >nul 2>nul
+REM Reliable 2-second sleep in Windows CMD
+ping 127.0.0.1 -n 3 >nul 2>&1
 
-echo Pulling internal app diagnostic log from /data/data/%APP_ID%/files/...
-adb shell "run-as %APP_ID% cat files/goal_dots_diagnostics.log" > "%OUTDIR%\internal_app_diagnostic.log" 2>nul
-
-echo.
-echo ==============================================================================
-echo DIAGNOSTIC COLLECTION FINISHED!
-echo Folder created: %OUTDIR%
-echo Contents:
-echo  - logcat_stream.txt (Full real-time logcat with millisecond timeline)
-echo  - internal_app_diagnostic.log (In-app diagnostic recorder log)
-echo  - snap_XXX_PID_* (Continuous system wallpaper & service state snapshots)
-echo ==============================================================================
-echo.
-echo Please ZIP the folder '%OUTDIR%' or send its contents.
-pause
+goto :loop
