@@ -2,11 +2,12 @@ package com.example.render
 
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.Log
+import com.example.data.GoalLoadState
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
 import com.example.model.DotState
@@ -16,10 +17,30 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
+ * Geometric definition of the visible on-screen viewport within the wallpaper canvas.
+ * Accommodates wallpaper scrolling offsets and displays content precisely in the visual center.
+ */
+data class ViewportBounds(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float
+) {
+    val width: Float get() = max(1f, right - left)
+    val height: Float get() = max(1f, bottom - top)
+    val centerX: Float get() = left + (width / 2f)
+    val centerY: Float get() = top + (height / 2f)
+}
+
+/**
  * Pure, high-performance canvas renderer for the Goal Dots wallpaper.
  * Reused identically in WallpaperService and Compose preview.
  */
 class WallpaperRenderer {
+
+    companion object {
+        private const val TAG_RENDER = "GOAL_RENDER"
+    }
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val completedDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -41,6 +62,14 @@ class WallpaperRenderer {
         letterSpacing = 0.12f
     }
 
+    // Paint for StaticLayout multi-line title.
+    // NOTE: For StaticLayout, textAlign MUST be LEFT because Alignment.ALIGN_CENTER handles horizontal centering.
+    private val titleLayoutPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.LEFT
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+
+    // Paint for single-line canvas.drawText (e.g. empty state title)
     private val titleTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
@@ -58,7 +87,7 @@ class WallpaperRenderer {
     }
 
     /**
-     * Render the goal snapshot onto the provided [canvas].
+     * Backward-compatible convenience overload for Compose Preview.
      */
     fun render(
         canvas: Canvas,
@@ -67,17 +96,51 @@ class WallpaperRenderer {
         snapshot: GoalSnapshot,
         density: Float = 2.5f
     ) {
-        if (width <= 0 || height <= 0) return
+        val viewport = ViewportBounds(0f, 0f, width.toFloat(), height.toFloat())
+        val loadState = if (snapshot.status is GoalStatus.NoGoal) {
+            GoalLoadState.NoGoal
+        } else {
+            GoalLoadState.Loaded(snapshot.goalData ?: return)
+        }
+        render(canvas, width, height, viewport, loadState, snapshot, density)
+    }
+
+    /**
+     * Full viewport-aware render method.
+     * Guarantees that all content (dots, title, header, footer) shares ONE coherent
+     * coordinate system centered at [viewport.centerX].
+     */
+    fun render(
+        canvas: Canvas,
+        surfaceWidth: Int,
+        surfaceHeight: Int,
+        viewport: ViewportBounds,
+        loadState: GoalLoadState,
+        snapshot: GoalSnapshot,
+        density: Float = 2.5f
+    ) {
+        if (surfaceWidth <= 0 || surfaceHeight <= 0) return
 
         val theme = snapshot.goalData?.settings?.theme ?: ColorTheme.OBSIDIAN_CORAL
 
-        // 1. Draw Background
+        // 1. Draw Background covering the FULL surface canvas
         bgPaint.color = theme.backgroundColor
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+        canvas.drawRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat(), bgPaint)
 
-        // If no goal set, render placeholder
-        if (snapshot.status is GoalStatus.NoGoal) {
-            renderEmptyState(canvas, width, height, theme, density)
+        Log.d(
+            TAG_RENDER,
+            "render: surface=(${surfaceWidth}x$surfaceHeight), viewport=(${viewport.left.toInt()}..${viewport.right.toInt()}, cx=${viewport.centerX.toInt()}), loadState=${loadState::class.simpleName}, status=${snapshot.status::class.simpleName}"
+        )
+
+        // Prevent false "No Goal Active" flash while async DataStore is loading
+        if (loadState is GoalLoadState.Loading) {
+            Log.d(TAG_RENDER, "Skipping content rendering during Loading state")
+            return
+        }
+
+        // If explicitly confirmed that no goal is set or Error, render placeholder
+        if (loadState is GoalLoadState.NoGoal || snapshot.status is GoalStatus.NoGoal) {
+            renderEmptyState(canvas, viewport, theme, density)
             return
         }
 
@@ -91,29 +154,26 @@ class WallpaperRenderer {
         currentDotRingPaint.strokeWidth = (2f * density).coerceAtLeast(1.5f)
 
         headerTextPaint.color = theme.accentTextColor
-        titleTextPaint.color = theme.primaryTextColor
+        titleLayoutPaint.color = theme.primaryTextColor
         footerTextPaint.color = theme.secondaryTextColor
 
-        // Responsive font sizing
-        val headerSize = (width * 0.038f).coerceIn(12f * density, 18f * density)
-        val titleSize = (width * 0.052f).coerceIn(16f * density, 26f * density)
-        val footerSize = (width * 0.036f).coerceIn(12f * density, 16f * density)
+        // Responsive font sizing based on visible viewport width
+        val headerSize = (viewport.width * 0.038f).coerceIn(12f * density, 18f * density)
+        val titleSize = (viewport.width * 0.052f).coerceIn(16f * density, 26f * density)
+        val footerSize = (viewport.width * 0.036f).coerceIn(12f * density, 16f * density)
 
         headerTextPaint.textSize = headerSize
-        titleTextPaint.textSize = titleSize
+        titleLayoutPaint.textSize = titleSize
         footerTextPaint.textSize = footerSize
 
-        // Safe area definition:
-        // Top margin ~20% of canvas height (reserves space for lockscreen clock / notifications)
-        // Bottom margin ~16% of canvas height (reserves space for lockscreen shortcuts / dock)
-        // Vertical bias allows user to shift content up/down
-        val minTopMargin = height * 0.16f
-        val maxTopMargin = height * 0.30f
+        // Safe area margins relative to visible viewport
+        val minTopMargin = viewport.height * 0.16f
+        val maxTopMargin = viewport.height * 0.30f
         val topMargin = minTopMargin + (maxTopMargin - minTopMargin) * settings.verticalBias
 
-        val bottomMargin = height * 0.15f
-        val horizontalMargin = width * 0.08f
-        val availableContentWidth = width - (horizontalMargin * 2f)
+        val bottomMargin = viewport.height * 0.15f
+        val horizontalMargin = viewport.width * 0.08f
+        val availableContentWidth = viewport.width - (horizontalMargin * 2f)
 
         var cursorY = topMargin
 
@@ -123,7 +183,7 @@ class WallpaperRenderer {
             val headerHeight = headerFontMetrics.descent - headerFontMetrics.ascent
             canvas.drawText(
                 snapshot.headerText,
-                width / 2f,
+                viewport.centerX,
                 cursorY - headerFontMetrics.ascent,
                 headerTextPaint
             )
@@ -131,14 +191,15 @@ class WallpaperRenderer {
         }
 
         // 3. Render Goal Title (with StaticLayout for multi-line support)
-        val titleLayout = buildTextLayout(
+        val titleLayout = buildCenteredTextLayout(
             text = snapshot.titleText,
-            paint = titleTextPaint,
+            paint = titleLayoutPaint,
             width = availableContentWidth.toInt(),
             maxLines = 3
         )
+        val contentLeft = viewport.left + horizontalMargin
         canvas.save()
-        canvas.translate(horizontalMargin, cursorY)
+        canvas.translate(contentLeft, cursorY)
         titleLayout.draw(canvas)
         canvas.restore()
         cursorY += titleLayout.height + (16f * density)
@@ -153,7 +214,7 @@ class WallpaperRenderer {
             0f
         }
 
-        val availableGridHeight = (height - bottomMargin - totalFooterAlloc - cursorY).coerceAtLeast(60f * density)
+        val availableGridHeight = (viewport.height - bottomMargin - totalFooterAlloc - cursorY).coerceAtLeast(60f * density)
 
         // 5. Calculate Grid Layout
         val gridResult = GridCalculator.calculateGrid(
@@ -165,16 +226,13 @@ class WallpaperRenderer {
             spacingRatio = 0.95f
         )
 
-        // Render Dots
-        val gridOffsetX = horizontalMargin + gridResult.startX
-        val gridOffsetY = cursorY + gridResult.startY
-
+        // Render Dots in the exact same coordinate system
         val radius = gridResult.dotRadius
         val ringRadius = radius * 1.45f
 
         for (i in 0 until min(snapshot.totalDots, gridResult.dotPositions.size)) {
             val pos = gridResult.dotPositions[i]
-            val dotX = horizontalMargin + pos.x
+            val dotX = contentLeft + pos.x
             val dotY = cursorY + pos.y
             val state = if (i < snapshot.dotStates.size) snapshot.dotStates[i] else DotState.FUTURE
 
@@ -186,9 +244,7 @@ class WallpaperRenderer {
                     canvas.drawCircle(dotX, dotY, radius, futureDotPaint)
                 }
                 DotState.CURRENT -> {
-                    // Draw glowing outer ring first
                     canvas.drawCircle(dotX, dotY, ringRadius, currentDotRingPaint)
-                    // Draw filled accent center
                     canvas.drawCircle(dotX, dotY, radius, currentDotPaint)
                 }
             }
@@ -199,7 +255,7 @@ class WallpaperRenderer {
             val footerY = cursorY + gridResult.startY + gridResult.gridHeight + footerSpacing
             canvas.drawText(
                 snapshot.footerText,
-                width / 2f,
+                viewport.centerX,
                 footerY - footerFontMetrics.ascent,
                 footerTextPaint
             )
@@ -208,31 +264,29 @@ class WallpaperRenderer {
 
     private fun renderEmptyState(
         canvas: Canvas,
-        width: Int,
-        height: Int,
+        viewport: ViewportBounds,
         theme: ColorTheme,
         density: Float
     ) {
-        // Render welcoming placeholder layout
         headerTextPaint.color = theme.accentTextColor
-        headerTextPaint.textSize = (width * 0.042f).coerceIn(14f * density, 20f * density)
+        headerTextPaint.textSize = (viewport.width * 0.042f).coerceIn(14f * density, 20f * density)
 
         titleTextPaint.color = theme.primaryTextColor
-        titleTextPaint.textSize = (width * 0.06f).coerceIn(18f * density, 28f * density)
+        titleTextPaint.textSize = (viewport.width * 0.06f).coerceIn(18f * density, 28f * density)
 
         emptySubtextPaint.color = theme.secondaryTextColor
-        emptySubtextPaint.textSize = (width * 0.038f).coerceIn(12f * density, 16f * density)
+        emptySubtextPaint.textSize = (viewport.width * 0.038f).coerceIn(12f * density, 16f * density)
 
-        val centerY = height * 0.46f
+        val centerY = viewport.centerY
 
-        // Draw 5x5 decorative mini matrix
+        // Draw 5x5 decorative mini matrix centered at viewport.centerX
         val cols = 5
         val rows = 5
         val dotRadius = 4f * density
         val spacing = 7f * density
         val matrixWidth = cols * (2 * dotRadius) + (cols - 1) * spacing
         val matrixHeight = rows * (2 * dotRadius) + (rows - 1) * spacing
-        val matrixStartX = (width - matrixWidth) / 2f
+        val matrixStartX = viewport.centerX - (matrixWidth / 2f)
         val matrixStartY = centerY - matrixHeight - (28f * density)
 
         futureDotPaint.color = theme.futureDotColor
@@ -253,12 +307,12 @@ class WallpaperRenderer {
             }
         }
 
-        canvas.drawText("GOAL DOTS", width / 2f, centerY + (10f * density), headerTextPaint)
-        canvas.drawText("No Goal Active", width / 2f, centerY + (36f * density), titleTextPaint)
-        canvas.drawText("Open app to create your countdown", width / 2f, centerY + (60f * density), emptySubtextPaint)
+        canvas.drawText("GOAL DOTS", viewport.centerX, centerY + (10f * density), headerTextPaint)
+        canvas.drawText("No Goal Active", viewport.centerX, centerY + (36f * density), titleTextPaint)
+        canvas.drawText("Open app to create your countdown", viewport.centerX, centerY + (60f * density), emptySubtextPaint)
     }
 
-    private fun buildTextLayout(
+    private fun buildCenteredTextLayout(
         text: String,
         paint: TextPaint,
         width: Int,
@@ -266,7 +320,7 @@ class WallpaperRenderer {
     ): StaticLayout {
         val safeWidth = max(10, width)
         return StaticLayout.Builder.obtain(text, 0, text.length, paint, safeWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
             .setLineSpacing(0f, 1.15f)
             .setIncludePad(false)
             .setMaxLines(maxLines)

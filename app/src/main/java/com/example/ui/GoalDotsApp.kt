@@ -99,8 +99,9 @@ fun GoalDotsApp(
     }
 
     val setWallpaperAction: () -> Unit = {
-        viewModel.saveGoal()
-        launchWallpaperPicker(context)
+        viewModel.saveGoal {
+            launchWallpaperPicker(context)
+        }
     }
 
     Scaffold(

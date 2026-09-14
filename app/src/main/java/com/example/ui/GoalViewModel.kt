@@ -1,8 +1,10 @@
 package com.example.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
@@ -62,31 +64,47 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
-            repository.goalFlow.collect { savedGoal ->
-                if (savedGoal != null) {
-                    _uiState.update { current ->
-                        current.copy(
-                            goalName = savedGoal.name,
-                            startDate = savedGoal.startDate,
-                            endDate = savedGoal.endDate,
-                            themeId = savedGoal.settings.themeId,
-                            showPercentage = savedGoal.settings.showPercentage,
-                            showRemainingDays = savedGoal.settings.showRemainingDays,
-                            showStatusHeader = savedGoal.settings.showStatusHeader,
-                            verticalBias = savedGoal.settings.verticalBias,
-                            isSaved = true,
-                            validationError = null
-                        )
+            repository.goalStateFlow.collect { state ->
+                Log.d("GOAL_DATASTORE", "ViewModel collected goalState: $state")
+                when (state) {
+                    is GoalLoadState.Loaded -> {
+                        val savedGoal = state.goal
+                        Log.d("GOAL_DATASTORE", "ViewModel updating UI with savedGoal: '${savedGoal.name}'")
+                        _uiState.update { current ->
+                            current.copy(
+                                goalName = savedGoal.name,
+                                startDate = savedGoal.startDate,
+                                endDate = savedGoal.endDate,
+                                themeId = savedGoal.settings.themeId,
+                                showPercentage = savedGoal.settings.showPercentage,
+                                showRemainingDays = savedGoal.settings.showRemainingDays,
+                                showStatusHeader = savedGoal.settings.showStatusHeader,
+                                verticalBias = savedGoal.settings.verticalBias,
+                                isSaved = true,
+                                validationError = null
+                            )
+                        }
                     }
-                } else {
-                    // Set default sample goal for great first-time onboarding
-                    _uiState.update { current ->
-                        current.copy(
-                            goalName = "Build a profitable startup",
-                            startDate = LocalDate.now(),
-                            endDate = LocalDate.now().plusDays(179),
-                            isSaved = false
-                        )
+                    is GoalLoadState.NoGoal -> {
+                        _uiState.update { current ->
+                            if (current.goalName.isEmpty()) {
+                                current.copy(
+                                    goalName = "Build a profitable startup",
+                                    startDate = LocalDate.now(),
+                                    endDate = LocalDate.now().plusDays(179),
+                                    isSaved = false
+                                )
+                            } else {
+                                current.copy(isSaved = false)
+                            }
+                        }
+                    }
+                    is GoalLoadState.Loading -> {
+                        // Keep current state during initial async load to avoid UI flicker
+                    }
+                    is GoalLoadState.Error -> {
+                        Log.e("GOAL_DATASTORE", "ViewModel error loading goal: ${state.message}")
+                        _uiState.update { it.copy(validationError = state.message) }
                     }
                 }
             }
@@ -182,14 +200,27 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
         return errorMsg == null
     }
 
-    fun saveGoal(): Boolean {
-        if (!validate()) return false
+    fun saveGoal(onComplete: (() -> Unit)? = null): Boolean {
+        Log.d(
+            "GOAL_SAVE",
+            "saveGoal requested: name='${_uiState.value.goalName}', start=${_uiState.value.startDate}, end=${_uiState.value.endDate}"
+        )
+        if (!validate()) {
+            Log.w("GOAL_SAVE", "saveGoal validation failed: ${_uiState.value.validationError}")
+            return false
+        }
         val state = _uiState.value
-        val goal = state.currentGoalData ?: return false
+        val goal = state.currentGoalData ?: run {
+            Log.w("GOAL_SAVE", "currentGoalData was null despite validation passing")
+            return false
+        }
 
         viewModelScope.launch {
+            Log.d("GOAL_SAVE", "Persisting goal to DataStore...")
             repository.saveGoal(goal)
             _uiState.update { it.copy(isSaved = true, showSaveSuccessMessage = true) }
+            Log.d("GOAL_SAVE", "Goal successfully saved in ViewModel state. Invoking onComplete.")
+            onComplete?.invoke()
         }
         return true
     }
@@ -198,6 +229,7 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.isSaved) {
             val goal = _uiState.value.currentGoalData ?: return
             viewModelScope.launch {
+                Log.d("GOAL_SAVE", "autoSave triggered for configured goal: ${goal.name}")
                 repository.saveGoal(goal)
             }
         }
