@@ -121,26 +121,27 @@ class WallpaperRenderer {
     ) {
         if (surfaceWidth <= 0 || surfaceHeight <= 0) return
 
+        Log.d(
+            TAG_RENDER,
+            "render requested: surface=(${surfaceWidth}x$surfaceHeight), viewport=(${viewport.left.toInt()}..${viewport.right.toInt()}), loadState=${loadState::class.simpleName}, status=${snapshot.status::class.simpleName}, dots=${snapshot.totalDots}"
+        )
+
+        // Prevent false "No Goal Active" flash while async DataStore is loading
+        if (loadState is GoalLoadState.Loading) {
+            Log.d(TAG_RENDER, "Skipping render: DataStore is in Loading state")
+            return
+        }
+
         val theme = snapshot.goalData?.settings?.theme ?: ColorTheme.OBSIDIAN_CORAL
 
         // 1. Draw Background covering the FULL surface canvas
         bgPaint.color = theme.backgroundColor
         canvas.drawRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat(), bgPaint)
 
-        Log.d(
-            TAG_RENDER,
-            "render: surface=(${surfaceWidth}x$surfaceHeight), viewport=(${viewport.left.toInt()}..${viewport.right.toInt()}, cx=${viewport.centerX.toInt()}), loadState=${loadState::class.simpleName}, status=${snapshot.status::class.simpleName}"
-        )
-
-        // Prevent false "No Goal Active" flash while async DataStore is loading
-        if (loadState is GoalLoadState.Loading) {
-            Log.d(TAG_RENDER, "Skipping content rendering during Loading state")
-            return
-        }
-
         // If explicitly confirmed that no goal is set or Error, render placeholder
         if (loadState is GoalLoadState.NoGoal || snapshot.status is GoalStatus.NoGoal) {
             renderEmptyState(canvas, viewport, theme, density)
+            Log.d(TAG_RENDER, "render completed: empty state drawn")
             return
         }
 
@@ -260,6 +261,7 @@ class WallpaperRenderer {
                 footerTextPaint
             )
         }
+        Log.d(TAG_RENDER, "render completed successfully: ${snapshot.totalDots} dots rendered")
     }
 
     private fun renderEmptyState(

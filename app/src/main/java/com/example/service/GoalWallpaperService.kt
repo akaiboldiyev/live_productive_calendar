@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Canvas
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -25,34 +26,60 @@ import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 
 /**
  * Android Live Wallpaper Service rendering the dynamic Goal Dots countdown.
  * Highly battery-efficient: only renders when visible, on real calendar date/settings changes,
  * and maintains exact visual screen centering regardless of launcher wallpaper scrolling.
+ *
+ * Designed to be 100% resilient across process death, Activity destruction, Recents dismissal,
+ * and OEM-specific (HyperOS/MIUI/OneUI) surface recreation cycles.
  */
 class GoalWallpaperService : WallpaperService() {
 
-    override fun onCreateEngine(): Engine {
-        return GoalEngine()
+    companion object {
+        private const val TAG_SERVICE = "GOAL_SERVICE"
+        private const val TAG_ENGINE = "GOAL_ENGINE"
+        private val engineSequence = AtomicInteger(0)
     }
 
-    inner class GoalEngine : Engine() {
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG_SERVICE, "GoalWallpaperService onCreate: process restarted/created")
+    }
 
-        private val tag = "GoalWallpaperEngine"
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG_SERVICE, "GoalWallpaperService onDestroy")
+    }
+
+    override fun onCreateEngine(): Engine {
+        val id = engineSequence.incrementAndGet()
+        Log.d(TAG_SERVICE, "GoalWallpaperService onCreateEngine: assigned engineId=$id")
+        return GoalEngine(id)
+    }
+
+    inner class GoalEngine(private val engineId: Int) : Engine() {
+
         private val renderer = WallpaperRenderer()
         private val repository by lazy { GoalRepository.getInstance(applicationContext) }
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private var dataCollectJob: Job? = null
 
+        // Lifecycle-managed surface and visibility states
+        private var isSurfaceReady = false
         private var surfaceWidth = 0
         private var surfaceHeight = 0
         private var isVisibleState = false
+
+        // State machine for asynchronous DataStore flow
         private var currentLoadState: GoalLoadState = GoalLoadState.Loading
         private var cachedGoal: GoalData? = null
         private var lastRenderedDate: LocalDate? = null
 
+        // Parallax and viewport bounds
         private var currentXOffset: Float = 0f
         private var currentXPixelOffset: Int = 0
 
@@ -65,8 +92,8 @@ class GoalWallpaperService : WallpaperService() {
                 if (isVisibleState) {
                     val today = LocalDate.now()
                     if (today != lastRenderedDate) {
-                        Log.d("GOAL_WALLPAPER", "Midnight triggered: redrawing frame for new date $today")
-                        drawFrame()
+                        Log.d(TAG_ENGINE, "Engine[$engineId] Midnight triggered: redrawing frame for new date $today")
+                        requestRender("midnightDateChange")
                     }
                     scheduleMidnightUpdate()
                 }
@@ -77,21 +104,22 @@ class GoalWallpaperService : WallpaperService() {
         private val timeChangedReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (isVisibleState) {
-                    Log.d("GOAL_WALLPAPER", "Time/Date broadcast received (${intent?.action}) - redrawing frame")
-                    drawFrame()
+                    Log.d(TAG_ENGINE, "Engine[$engineId] Time/Date broadcast received (${intent?.action})")
+                    requestRender("systemTimeChanged")
                 }
             }
         }
 
         override fun onCreate(surfaceHolder: SurfaceHolder?) {
             super.onCreate(surfaceHolder)
-            Log.d("GOAL_WALLPAPER", "Engine onCreate: subscribing to goalStateFlow")
-            // Observe goal changes from DataStore
+            Log.d(TAG_ENGINE, "Engine[$engineId] onCreate: isPreview=$isPreview")
+
+            // Subscribe to DataStore flow. The Engine is completely decoupled from Activity lifecycle
             dataCollectJob = scope.launch {
                 repository.goalStateFlow.collect { state ->
                     Log.d(
-                        "GOAL_WALLPAPER",
-                        "Engine collected goalState: $state (isVisible=$isVisibleState, isPreview=$isPreview)"
+                        TAG_ENGINE,
+                        "Engine[$engineId] DataStore emitted: ${state::class.simpleName} (ready=$isSurfaceReady, visible=$isVisibleState)"
                     )
                     currentLoadState = state
                     when (state) {
@@ -100,40 +128,25 @@ class GoalWallpaperService : WallpaperService() {
                         else -> { /* retain previous or remain null while Loading/Error */ }
                     }
 
-                    // Always redraw when goal updates
-                    if (isVisibleState || isPreview) {
-                        drawFrame()
-                    }
+                    // Always request render when DataStore updates, regardless of arrival order
+                    requestRender("dataStoreUpdated")
                 }
             }
         }
 
-        override fun onDestroy() {
-            super.onDestroy()
-            Log.d("GOAL_WALLPAPER", "Engine onDestroy")
-            unregisterTimeReceiver()
-            mainHandler.removeCallbacksAndMessages(null)
-            dataCollectJob?.cancel()
-            scope.cancel()
-        }
-
-        override fun onVisibilityChanged(visible: Boolean) {
-            super.onVisibilityChanged(visible)
-            isVisibleState = visible
-            Log.d(
-                "GOAL_WALLPAPER",
-                "onVisibilityChanged: visible=$visible, cachedGoal='${cachedGoal?.name}', loadState=$currentLoadState"
-            )
-
-            if (visible) {
-                registerTimeReceiver()
-                // Always draw a fresh frame when the screen unlocks / becomes visible
-                drawFrame()
-                scheduleMidnightUpdate()
-            } else {
-                unregisterTimeReceiver()
-                mainHandler.removeCallbacks(midnightRunnable)
+        override fun onSurfaceCreated(holder: SurfaceHolder) {
+            super.onSurfaceCreated(holder)
+            isSurfaceReady = true
+            val frame = holder.surfaceFrame
+            if (frame != null && frame.width() > 0 && frame.height() > 0) {
+                surfaceWidth = frame.width()
+                surfaceHeight = frame.height()
             }
+            Log.d(
+                TAG_ENGINE,
+                "Engine[$engineId] onSurfaceCreated: surface=(${surfaceWidth}x$surfaceHeight), isVisible=$isVisibleState, isPreview=$isPreview"
+            )
+            requestRender("onSurfaceCreated")
         }
 
         override fun onSurfaceChanged(
@@ -143,21 +156,50 @@ class GoalWallpaperService : WallpaperService() {
             height: Int
         ) {
             super.onSurfaceChanged(holder, format, width, height)
+            isSurfaceReady = true
             surfaceWidth = width
             surfaceHeight = height
             Log.d(
-                "GOAL_WALLPAPER",
-                "onSurfaceChanged: surfaceWidth=$width, surfaceHeight=$height, screenWidth=${resources.displayMetrics.widthPixels}"
+                TAG_ENGINE,
+                "Engine[$engineId] onSurfaceChanged: format=$format, surface=(${width}x$height), isVisible=$isVisibleState"
             )
-            drawFrame()
+            requestRender("onSurfaceChanged")
+        }
+
+        override fun onVisibilityChanged(visible: Boolean) {
+            super.onVisibilityChanged(visible)
+            isVisibleState = visible
+            Log.d(
+                TAG_ENGINE,
+                "Engine[$engineId] onVisibilityChanged: visible=$visible, ready=$isSurfaceReady, loadState=${currentLoadState::class.simpleName}, goal='${cachedGoal?.name}'"
+            )
+
+            if (visible) {
+                registerTimeReceiver()
+                scheduleMidnightUpdate()
+                requestRender("onVisibilityChanged(true)")
+            } else {
+                unregisterTimeReceiver()
+                mainHandler.removeCallbacks(midnightRunnable)
+            }
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder?) {
             super.onSurfaceDestroyed(holder)
-            Log.d("GOAL_WALLPAPER", "onSurfaceDestroyed")
-            isVisibleState = false
+            isSurfaceReady = false
+            Log.d(TAG_ENGINE, "Engine[$engineId] onSurfaceDestroyed")
             unregisterTimeReceiver()
             mainHandler.removeCallbacks(midnightRunnable)
+        }
+
+        override fun onDestroy() {
+            super.onDestroy()
+            isSurfaceReady = false
+            Log.d(TAG_ENGINE, "Engine[$engineId] onDestroy")
+            unregisterTimeReceiver()
+            mainHandler.removeCallbacksAndMessages(null)
+            dataCollectJob?.cancel()
+            scope.cancel()
         }
 
         override fun onOffsetsChanged(
@@ -176,11 +218,105 @@ class GoalWallpaperService : WallpaperService() {
             // If surface is wider than screen, update content position so it remains visually centered on screen
             val screenW = resources.displayMetrics.widthPixels
             if (changed && surfaceWidth > screenW && (isVisibleState || isPreview)) {
-                Log.d(
-                    "GOAL_WALLPAPER",
-                    "onOffsetsChanged triggered redraw: xOffset=$xOffset, xPixelOffset=$xPixelOffset"
-                )
-                drawFrame()
+                requestRender("onOffsetsChanged")
+            }
+        }
+
+        /**
+         * Consolidated state machine gate for rendering.
+         * Ensures that regardless of whether DataStore loads first or Surface is created first,
+         * or if the screen was turned on before/after surface initialization, the latest
+         * immutable state will always be drawn as soon as preconditions are satisfied.
+         */
+        private fun requestRender(reason: String) {
+            Log.d(
+                TAG_ENGINE,
+                "Engine[$engineId] requestRender triggered by '$reason' [ready=$isSurfaceReady, visible=$isVisibleState, preview=$isPreview, loadState=${currentLoadState::class.simpleName}, surface=(${surfaceWidth}x$surfaceHeight)]"
+            )
+
+            if (!isSurfaceReady) {
+                Log.d(TAG_ENGINE, "Engine[$engineId] Surface not ready -> deferring render")
+                return
+            }
+
+            if (!isVisibleState && !isPreview) {
+                Log.d(TAG_ENGINE, "Engine[$engineId] Wallpaper not visible -> deferring render until onVisibilityChanged(true)")
+                return
+            }
+
+            if (currentLoadState is GoalLoadState.Loading) {
+                Log.d(TAG_ENGINE, "Engine[$engineId] DataStore is loading -> deferring render until data arrival")
+                return
+            }
+
+            // Ensure valid surface dimensions
+            if (surfaceWidth <= 0 || surfaceHeight <= 0) {
+                val frame = surfaceHolder?.surfaceFrame
+                if (frame != null && frame.width() > 0 && frame.height() > 0) {
+                    surfaceWidth = frame.width()
+                    surfaceHeight = frame.height()
+                } else {
+                    Log.d(TAG_ENGINE, "Engine[$engineId] Surface dimensions 0 -> deferring render")
+                    return
+                }
+            }
+
+            drawFrame(attempt = 1)
+        }
+
+        private fun drawFrame(attempt: Int = 1) {
+            val holder = surfaceHolder ?: return
+            if (!isSurfaceReady || surfaceWidth <= 0 || surfaceHeight <= 0) return
+
+            val today = LocalDate.now()
+            lastRenderedDate = today
+
+            val snapshot = GoalProgressCalculator.computeSnapshot(cachedGoal, today)
+            val density = resources.displayMetrics.density
+            val viewport = computeVisibleViewport(surfaceWidth, surfaceHeight)
+
+            Log.d(
+                TAG_ENGINE,
+                "Engine[$engineId] drawFrame: attempt=$attempt, title='${snapshot.titleText}', status=${snapshot.status::class.simpleName}, dots=${snapshot.totalDots}, loadState=${currentLoadState::class.simpleName}"
+            )
+
+            var canvas: Canvas? = null
+            try {
+                canvas = holder.lockCanvas()
+            } catch (e: Exception) {
+                Log.e(TAG_ENGINE, "Engine[$engineId] Failed to lockCanvas on attempt $attempt", e)
+            }
+
+            if (canvas != null) {
+                try {
+                    renderer.render(
+                        canvas = canvas,
+                        surfaceWidth = surfaceWidth,
+                        surfaceHeight = surfaceHeight,
+                        viewport = viewport,
+                        loadState = currentLoadState,
+                        snapshot = snapshot,
+                        density = density
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG_ENGINE, "Engine[$engineId] Error during wallpaper render", e)
+                } finally {
+                    try {
+                        holder.unlockCanvasAndPost(canvas)
+                    } catch (e: Exception) {
+                        Log.e(TAG_ENGINE, "Engine[$engineId] Failed to unlockCanvasAndPost", e)
+                    }
+                }
+            } else {
+                // If lockCanvas failed (e.g. keyguard transition or surface allocation race), retry
+                if (attempt < 3 && isSurfaceReady && (isVisibleState || isPreview)) {
+                    Log.d(TAG_ENGINE, "Engine[$engineId] Scheduling retry $attempt in 100ms")
+                    mainHandler.postDelayed({
+                        if (isSurfaceReady && (isVisibleState || isPreview)) {
+                            drawFrame(attempt + 1)
+                        }
+                    }, 100L)
+                }
             }
         }
 
@@ -194,8 +330,6 @@ class GoalWallpaperService : WallpaperService() {
             val visibleWidth = min(effectiveSurfaceW, screenW).toFloat()
             val visibleHeight = effectiveSurfaceH.toFloat()
 
-            // When launcher surface is wider than physical screen (e.g. Samsung One UI multi-page wallpaper),
-            // calculate the visible window inside the surface canvas so content stays centered on the physical screen.
             val visibleLeft = if (effectiveSurfaceW > screenW) {
                 val extraWidth = (effectiveSurfaceW - screenW).toFloat()
                 if (currentXPixelOffset != 0) {
@@ -213,52 +347,6 @@ class GoalWallpaperService : WallpaperService() {
                 right = visibleLeft + visibleWidth,
                 bottom = visibleHeight
             )
-        }
-
-        private fun drawFrame() {
-            val holder = surfaceHolder ?: return
-            if (surfaceWidth <= 0 || surfaceHeight <= 0) return
-
-            val today = LocalDate.now()
-            lastRenderedDate = today
-
-            val snapshot = GoalProgressCalculator.computeSnapshot(cachedGoal, today)
-            val density = resources.displayMetrics.density
-            val viewport = computeVisibleViewport(surfaceWidth, surfaceHeight)
-
-            Log.d(
-                "GOAL_WALLPAPER",
-                "drawFrame: title='${snapshot.titleText}', status=${snapshot.status::class.simpleName}, dots=${snapshot.totalDots}, loadState=${currentLoadState::class.simpleName}"
-            )
-
-            var canvas = try {
-                holder.lockCanvas()
-            } catch (e: Exception) {
-                Log.e(tag, "Failed to lock canvas", e)
-                null
-            }
-
-            if (canvas != null) {
-                try {
-                    renderer.render(
-                        canvas = canvas,
-                        surfaceWidth = surfaceWidth,
-                        surfaceHeight = surfaceHeight,
-                        viewport = viewport,
-                        loadState = currentLoadState,
-                        snapshot = snapshot,
-                        density = density
-                    )
-                } catch (e: Exception) {
-                    Log.e(tag, "Error during wallpaper render", e)
-                } finally {
-                    try {
-                        holder.unlockCanvasAndPost(canvas)
-                    } catch (e: Exception) {
-                        Log.e(tag, "Failed to unlockCanvasAndPost", e)
-                    }
-                }
-            }
         }
 
         private fun registerTimeReceiver() {
@@ -283,7 +371,7 @@ class GoalWallpaperService : WallpaperService() {
                 try {
                     unregisterReceiver(timeChangedReceiver)
                 } catch (e: Exception) {
-                    Log.w(tag, "Error unregistering time receiver", e)
+                    Log.w(TAG_ENGINE, "Error unregistering time receiver", e)
                 }
                 isReceiverRegistered = false
             }

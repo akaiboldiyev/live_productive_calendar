@@ -61,6 +61,7 @@ class GoalRepository(private val context: Context) {
      * Prevents false "No Goal Active" flashes on initial app startup or wallpaper engine creation.
      */
     val goalStateFlow: Flow<GoalLoadState> = flow {
+        Log.d(TAG_DATASTORE, "DataStore flow collection started -> loading preferences")
         emit(GoalLoadState.Loading)
         emitAll(
             context.goalDataStore.data
@@ -117,7 +118,7 @@ class GoalRepository(private val context: Context) {
 
                     Log.d(
                         TAG_DATASTORE,
-                        "Successfully loaded goal: '${goal.name}', start=${goal.startDate}, end=${goal.endDate}, theme=${goal.settings.themeId}"
+                        "DataStore loaded: goalName='${goal.name}', startDate='${goal.startDate}', endDate='${goal.endDate}', theme='${goal.settings.themeId}'"
                     )
                     GoalLoadState.Loaded(goal)
                 }
