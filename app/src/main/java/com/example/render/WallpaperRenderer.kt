@@ -117,7 +117,8 @@ class WallpaperRenderer {
         viewport: ViewportBounds,
         loadState: GoalLoadState,
         snapshot: GoalSnapshot,
-        density: Float = 2.5f
+        density: Float = 2.5f,
+        drawDefaultBackground: Boolean = true
     ) {
         if (surfaceWidth <= 0 || surfaceHeight <= 0) return
 
@@ -134,9 +135,12 @@ class WallpaperRenderer {
 
         val theme = snapshot.goalData?.settings?.theme ?: ColorTheme.OBSIDIAN_CORAL
 
-        // 1. Draw Background covering the FULL surface canvas
-        bgPaint.color = theme.backgroundColor
-        canvas.drawRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat(), bgPaint)
+        // The service draws its photo/black background before this overlay. Compose preview
+        // retains the historic themed background through the default value.
+        if (drawDefaultBackground) {
+            bgPaint.color = theme.backgroundColor
+            canvas.drawRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat(), bgPaint)
+        }
 
         // If explicitly confirmed that no goal is set or Error, render placeholder
         if (loadState is GoalLoadState.NoGoal || snapshot.status is GoalStatus.NoGoal) {

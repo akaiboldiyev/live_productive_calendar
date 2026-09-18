@@ -1,16 +1,20 @@
 package com.example.ui
 
 import android.app.Application
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
 import com.example.model.AppearanceSettings
+import com.example.model.BackgroundType
 import com.example.model.ColorTheme
 import com.example.model.GoalData
 import com.example.model.GoalProgressCalculator
 import com.example.model.GoalSnapshot
+import com.example.model.WallpaperBackgroundConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +34,10 @@ data class GoalUiState(
     val isSaved: Boolean = false,
     val validationError: String? = null,
     val showSaveSuccessMessage: Boolean = false,
-    val showLockscreenOverlay: Boolean = false
+    val showLockscreenOverlay: Boolean = false,
+    val backgroundConfig: WallpaperBackgroundConfig = WallpaperBackgroundConfig(),
+    val isBackgroundImporting: Boolean = false,
+    val backgroundError: String? = null
 ) {
     val totalDays: Int
         get() = GoalProgressCalculator.calculateTotalDays(startDate, endDate)
@@ -106,6 +113,13 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
                         Log.e("GOAL_DATASTORE", "ViewModel error loading goal: ${state.message}")
                         _uiState.update { it.copy(validationError = state.message) }
                     }
+                }
+            }
+        }
+        viewModelScope.launch {
+            repository.backgroundConfigFlow.collect { config ->
+                _uiState.update { current ->
+                    current.copy(backgroundConfig = config, backgroundError = null)
                 }
             }
         }
@@ -185,6 +199,55 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(showSaveSuccessMessage = false) }
     }
 
+    fun selectBackground(uri: Uri) {
+        _uiState.update { it.copy(isBackgroundImporting = true, backgroundError = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.setImageBackground(uri) }
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(
+                            backgroundConfig = it.backgroundConfig.copy(type = BackgroundType.IMAGE),
+                            isBackgroundImporting = false,
+                            backgroundError = null
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    Log.e("GOAL_BACKGROUND", "Background import failed", error)
+                    _uiState.update {
+                        it.copy(
+                            isBackgroundImporting = false,
+                            backgroundError = "Could not import this photo. Please choose another image."
+                        )
+                    }
+                }
+        }
+    }
+
+    fun removeBackground() {
+        _uiState.update { it.copy(isBackgroundImporting = true, backgroundError = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.removeBackground() }
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(
+                            backgroundConfig = WallpaperBackgroundConfig(),
+                            isBackgroundImporting = false
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    Log.e("GOAL_BACKGROUND", "Removing background failed", error)
+                    _uiState.update {
+                        it.copy(
+                            isBackgroundImporting = false,
+                            backgroundError = "Could not remove the background."
+                        )
+                    }
+                }
+        }
+    }
+
     private fun validate(): Boolean {
         val state = _uiState.value
         val result = GoalProgressCalculator.validateGoal(
@@ -238,12 +301,13 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
     fun resetGoal() {
         viewModelScope.launch {
             repository.clearGoal()
-            _uiState.update {
+            _uiState.update { current ->
                 GoalUiState(
                     goalName = "",
                     startDate = LocalDate.now(),
                     endDate = LocalDate.now().plusDays(179),
-                    isSaved = false
+                    isSaved = false,
+                    backgroundConfig = current.backgroundConfig
                 )
             }
         }

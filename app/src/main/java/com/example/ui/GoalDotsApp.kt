@@ -5,6 +5,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.service.GoalWallpaperService
 import com.example.ui.components.AppearanceCard
+import com.example.ui.components.BackgroundCard
 import com.example.ui.components.DatePickerCards
 import com.example.ui.components.GoalStatsCard
 import com.example.ui.components.OemInfoDialog
@@ -83,6 +87,11 @@ fun GoalDotsApp(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) viewModel.selectBackground(uri)
+    }
 
     var showInfoDialog by remember { mutableStateOf(false) }
     var showDiagnosticDialog by remember { mutableStateOf(false) }
@@ -329,7 +338,21 @@ fun GoalDotsApp(
                 onToggleRemainingDays = { viewModel.toggleShowRemaining(it) }
             )
 
-            // 5. Save Changes Button
+            // 5. Background is intentionally independent from goal settings: importing uses
+            // the system picker and copies the selected image into app-private storage.
+            BackgroundCard(
+                config = uiState.backgroundConfig,
+                isImporting = uiState.isBackgroundImporting,
+                error = uiState.backgroundError,
+                onChoosePhoto = {
+                    photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                onUseDefaultBlack = { viewModel.removeBackground() }
+            )
+
+            // 6. Save Changes Button
             Button(
                 onClick = { viewModel.saveGoal() },
                 modifier = Modifier

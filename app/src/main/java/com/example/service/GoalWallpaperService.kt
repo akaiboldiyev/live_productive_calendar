@@ -16,9 +16,13 @@ import android.view.SurfaceHolder
 import com.example.GoalApplication
 import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
+import com.example.data.WallpaperBackgroundStorage
+import com.example.model.BackgroundType
 import com.example.model.GoalData
 import com.example.model.GoalProgressCalculator
+import com.example.model.WallpaperBackgroundConfig
 import com.example.render.ViewportBounds
+import com.example.render.WallpaperBackgroundRenderer
 import com.example.render.WallpaperRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -78,9 +83,12 @@ class GoalWallpaperService : WallpaperService() {
     inner class GoalEngine(private val engineId: Int) : Engine() {
 
         private val renderer = WallpaperRenderer()
+        private val backgroundRenderer = WallpaperBackgroundRenderer()
         private val repository by lazy { GoalRepository.getInstance(applicationContext) }
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private var dataCollectJob: Job? = null
+        private var backgroundConfigCollectJob: Job? = null
+        private var backgroundLoadJob: Job? = null
 
         // Lifecycle-managed surface and visibility states
         private var isSurfaceReady = false
@@ -94,6 +102,7 @@ class GoalWallpaperService : WallpaperService() {
         private var currentLoadState: GoalLoadState = GoalLoadState.Loading
         private var cachedGoal: GoalData? = null
         private var lastRenderedDate: LocalDate? = null
+        private var currentBackgroundConfig = WallpaperBackgroundConfig()
 
         // Parallax and viewport bounds
         private var currentXOffset: Float = 0f
@@ -121,7 +130,12 @@ class GoalWallpaperService : WallpaperService() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 val action = intent?.action
                 com.example.diagnostics.DiagnosticRecorder.log("BROADCAST_RECEIVED", "action=$action, visible=$isVisibleState")
-                if (action == GoalRepository.ACTION_GOAL_UPDATED) {
+                if (action == GoalRepository.ACTION_BACKGROUND_UPDATED) {
+                    Log.d(TAG_ENGINE, "Engine[$engineId] Background update broadcast received from UI process")
+                    backgroundRenderer.invalidateCache()
+                    scheduleBackgroundLoadIfNeeded()
+                    requestRender("backgroundUpdatedBroadcast")
+                } else if (action == GoalRepository.ACTION_GOAL_UPDATED) {
                     Log.d(TAG_ENGINE, "Engine[$engineId] Goal updated broadcast received from UI process")
                     requestRender("goalUpdatedBroadcast")
                 } else if (isVisibleState) {
@@ -166,6 +180,20 @@ class GoalWallpaperService : WallpaperService() {
                     requestRender("dataStoreUpdated")
                 }
             }
+
+            // Background configuration shares the existing multi-process DataStore. The
+            // bitmap itself remains app-private and is independently rebuilt after process death.
+            backgroundConfigCollectJob = scope.launch {
+                repository.backgroundConfigFlow.collect { config ->
+                    val changed = currentBackgroundConfig != config
+                    currentBackgroundConfig = config
+                    if (changed) {
+                        backgroundRenderer.invalidateCache()
+                    }
+                    scheduleBackgroundLoadIfNeeded()
+                    requestRender("backgroundConfigUpdated")
+                }
+            }
         }
 
         override fun onSurfaceCreated(holder: SurfaceHolder) {
@@ -189,6 +217,7 @@ class GoalWallpaperService : WallpaperService() {
                 TAG_ENGINE,
                 "Engine[$engineId] onSurfaceCreated: surface=(${surfaceWidth}x$surfaceHeight), isVisible=$isVisibleState, isPreview=$isPreview"
             )
+            scheduleBackgroundLoadIfNeeded()
             requestRender("onSurfaceCreated")
         }
 
@@ -200,6 +229,7 @@ class GoalWallpaperService : WallpaperService() {
         ) {
             super.onSurfaceChanged(holder, format, width, height)
             isSurfaceReady = true
+            val dimensionsChanged = surfaceWidth != width || surfaceHeight != height
             surfaceWidth = width
             surfaceHeight = height
             com.example.diagnostics.DiagnosticRecorder.log(
@@ -214,6 +244,10 @@ class GoalWallpaperService : WallpaperService() {
                 TAG_ENGINE,
                 "Engine[$engineId] onSurfaceChanged: format=$format, surface=(${width}x$height), visible=$isVisibleState"
             )
+            if (dimensionsChanged) {
+                backgroundRenderer.invalidateCache()
+            }
+            scheduleBackgroundLoadIfNeeded()
             requestRender("onSurfaceChanged")
         }
 
@@ -238,6 +272,7 @@ class GoalWallpaperService : WallpaperService() {
             if (visible) {
                 registerTimeReceiver()
                 scheduleMidnightUpdate()
+                scheduleBackgroundLoadIfNeeded()
                 requestRender("onVisibilityChanged(true)")
             } else {
                 unregisterTimeReceiver()
@@ -264,6 +299,9 @@ class GoalWallpaperService : WallpaperService() {
             unregisterTimeReceiver()
             mainHandler.removeCallbacksAndMessages(null)
             dataCollectJob?.cancel()
+            backgroundConfigCollectJob?.cancel()
+            backgroundLoadJob?.cancel()
+            backgroundRenderer.release()
             scope.cancel()
         }
 
@@ -365,6 +403,12 @@ class GoalWallpaperService : WallpaperService() {
                 com.example.diagnostics.DiagnosticRecorder.log("LOCK_CANVAS_SUCCESS", "engineId=$engineId, attempt=$attempt")
                 Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas SUCCESS (attempt $attempt)")
                 try {
+                    backgroundRenderer.drawBackground(
+                        canvas = canvas,
+                        config = currentBackgroundConfig,
+                        width = surfaceWidth,
+                        height = surfaceHeight
+                    )
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render START (loadState=${currentLoadState::class.simpleName}, dots=${snapshot.totalDots})")
                     renderer.render(
                         canvas = canvas,
@@ -373,7 +417,8 @@ class GoalWallpaperService : WallpaperService() {
                         viewport = viewport,
                         loadState = currentLoadState,
                         snapshot = snapshot,
-                        density = density
+                        density = density,
+                        drawDefaultBackground = false
                     )
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render END")
                 } catch (e: Exception) {
@@ -446,6 +491,48 @@ class GoalWallpaperService : WallpaperService() {
             )
         }
 
+        /**
+         * Starts a sampled decode only when an image is configured and the Engine has a drawable
+         * surface. Canvas drawing stays fast: until decoding finishes it safely shows black.
+         */
+        private fun scheduleBackgroundLoadIfNeeded() {
+            if (!isSurfaceReady || surfaceWidth <= 0 || surfaceHeight <= 0 || (!isVisibleState && !isPreview)) {
+                return
+            }
+            if (currentBackgroundConfig.type != BackgroundType.IMAGE) {
+                backgroundLoadJob?.cancel()
+                return
+            }
+            if (backgroundRenderer.isCachedFor(currentBackgroundConfig, surfaceWidth, surfaceHeight)) {
+                return
+            }
+
+            backgroundLoadJob?.cancel()
+            val requestedConfig = currentBackgroundConfig
+            val requestedWidth = surfaceWidth
+            val requestedHeight = surfaceHeight
+            backgroundLoadJob = scope.launch {
+                val bitmap = withContext(Dispatchers.IO) {
+                    WallpaperBackgroundRenderer.decodeBitmap(
+                        WallpaperBackgroundStorage.backgroundFile(applicationContext),
+                        requestedWidth,
+                        requestedHeight
+                    )
+                }
+                if (
+                    isSurfaceReady &&
+                    currentBackgroundConfig == requestedConfig &&
+                    surfaceWidth == requestedWidth &&
+                    surfaceHeight == requestedHeight
+                ) {
+                    backgroundRenderer.setBitmap(bitmap, requestedWidth, requestedHeight)
+                    requestRender("backgroundBitmapLoaded")
+                } else {
+                    bitmap?.takeUnless { it.isRecycled }?.recycle()
+                }
+            }
+        }
+
         private fun registerTimeReceiver() {
             if (!isReceiverRegistered) {
                 val filter = IntentFilter().apply {
@@ -454,6 +541,7 @@ class GoalWallpaperService : WallpaperService() {
                     addAction(Intent.ACTION_TIMEZONE_CHANGED)
                     addAction(Intent.ACTION_LOCALE_CHANGED)
                     addAction(GoalRepository.ACTION_GOAL_UPDATED)
+                    addAction(GoalRepository.ACTION_BACKGROUND_UPDATED)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     registerReceiver(timeChangedReceiver, filter, Context.RECEIVER_NOT_EXPORTED)

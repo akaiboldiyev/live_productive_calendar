@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.createMultiProcessCoordinator
@@ -13,10 +14,13 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
+import com.example.model.BackgroundType
 import com.example.model.GoalData
+import com.example.model.WallpaperBackgroundConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -43,6 +47,7 @@ class GoalRepository(private val context: Context) {
         private const val TAG_DATASTORE = "GOAL_DATASTORE"
         private const val TAG_SAVE = "GOAL_SAVE"
         const val ACTION_GOAL_UPDATED = "com.aistudio.goaldots.ACTION_GOAL_UPDATED"
+        const val ACTION_BACKGROUND_UPDATED = "com.aistudio.goaldots.ACTION_BACKGROUND_UPDATED"
 
         private val KEY_GOAL_NAME = stringPreferencesKey("goal_name")
         private val KEY_START_DATE = stringPreferencesKey("start_date")
@@ -52,6 +57,8 @@ class GoalRepository(private val context: Context) {
         private val KEY_SHOW_REMAINING = booleanPreferencesKey("show_remaining")
         private val KEY_SHOW_HEADER = booleanPreferencesKey("show_header")
         private val KEY_VERTICAL_BIAS = floatPreferencesKey("vertical_bias")
+        private val KEY_BACKGROUND_TYPE = stringPreferencesKey("background_type")
+        private val KEY_BACKGROUND_REVISION = longPreferencesKey("background_revision")
 
         @Volatile
         private var INSTANCE: GoalRepository? = null
@@ -187,6 +194,20 @@ class GoalRepository(private val context: Context) {
         }
     }
 
+    /** Uses the same multi-process DataStore as the goal configuration. */
+    val backgroundConfigFlow: Flow<WallpaperBackgroundConfig> = dataStore.data
+        .catch { exception ->
+            Log.e(TAG_DATASTORE, "Unable to read wallpaper background configuration", exception)
+            emit(emptyPreferences())
+        }
+        .map { preferences ->
+            val revision = preferences[KEY_BACKGROUND_REVISION] ?: 0L
+            when (preferences[KEY_BACKGROUND_TYPE]) {
+                BackgroundType.IMAGE.name -> WallpaperBackgroundConfig(BackgroundType.IMAGE, revision)
+                else -> WallpaperBackgroundConfig(BackgroundType.DEFAULT_BLACK, revision)
+            }
+        }
+
     suspend fun saveGoal(goal: GoalData) {
         Log.d(
             TAG_SAVE,
@@ -212,9 +233,17 @@ class GoalRepository(private val context: Context) {
     }
 
     suspend fun clearGoal() {
-        Log.d(TAG_SAVE, "clearGoal called - clearing all preferences")
+        Log.d(TAG_SAVE, "clearGoal called - clearing goal preferences")
         dataStore.edit { preferences ->
-            preferences.clear()
+            // Background selection is independent from a goal and must survive a goal reset.
+            preferences.remove(KEY_GOAL_NAME)
+            preferences.remove(KEY_START_DATE)
+            preferences.remove(KEY_END_DATE)
+            preferences.remove(KEY_THEME_ID)
+            preferences.remove(KEY_SHOW_PERCENTAGE)
+            preferences.remove(KEY_SHOW_REMAINING)
+            preferences.remove(KEY_SHOW_HEADER)
+            preferences.remove(KEY_VERTICAL_BIAS)
         }
         Log.d(TAG_SAVE, "clearGoal completed")
         try {
@@ -227,5 +256,36 @@ class GoalRepository(private val context: Context) {
 
     suspend fun getGoalSnapshotSync(): GoalData? {
         return runCatching { goalFlow.first() }.getOrNull()
+    }
+
+    /**
+     * Imports user-selected media into app-private storage before publishing IMAGE to the
+     * multi-process configuration. The wallpaper service never depends on the picker Uri.
+     */
+    suspend fun setImageBackground(uri: Uri) {
+        Log.i("GOAL_BACKGROUND", "Background selected")
+        WallpaperBackgroundStorage.copyFromUri(context, uri)
+        dataStore.edit { preferences ->
+            preferences[KEY_BACKGROUND_TYPE] = BackgroundType.IMAGE.name
+            preferences[KEY_BACKGROUND_REVISION] = (preferences[KEY_BACKGROUND_REVISION] ?: 0L) + 1L
+        }
+        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
+    }
+
+    suspend fun removeBackground() {
+        dataStore.edit { preferences ->
+            preferences[KEY_BACKGROUND_TYPE] = BackgroundType.DEFAULT_BLACK.name
+            preferences[KEY_BACKGROUND_REVISION] = (preferences[KEY_BACKGROUND_REVISION] ?: 0L) + 1L
+        }
+        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
+        WallpaperBackgroundStorage.delete(context)
+    }
+
+    private fun sendUpdateBroadcast(action: String) {
+        try {
+            context.sendBroadcast(Intent(action).setPackage(context.packageName))
+        } catch (e: Exception) {
+            Log.e(TAG_SAVE, "Failed to send update broadcast for $action", e)
+        }
     }
 }
