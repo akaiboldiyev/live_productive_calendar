@@ -21,11 +21,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK for Robolectric tests
-        uses: android-actions/setup-android@v3
-
       - name: Install Android API 34 test platform
-        run: sdkmanager "platforms;android-34"
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' ! -path '*/latest/*' | sort | tail -n 1)"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-34"
 
       # This project intentionally uses a pinned Gradle installation because its
       # repository does not currently include the Gradle wrapper files.
