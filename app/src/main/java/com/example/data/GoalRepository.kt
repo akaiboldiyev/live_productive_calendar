@@ -48,6 +48,8 @@ class GoalRepository(private val context: Context) {
         private const val TAG_SAVE = "GOAL_SAVE"
         const val ACTION_GOAL_UPDATED = "com.aistudio.goaldots.ACTION_GOAL_UPDATED"
         const val ACTION_BACKGROUND_UPDATED = "com.aistudio.goaldots.ACTION_BACKGROUND_UPDATED"
+        /** A transient, package-scoped hint; all durable state still lives in DataStore. */
+        const val ACTION_APP_MOVED_TO_BACKGROUND = "com.aistudio.goaldots.ACTION_APP_MOVED_TO_BACKGROUND"
 
         private val KEY_GOAL_NAME = stringPreferencesKey("goal_name")
         private val KEY_START_DATE = stringPreferencesKey("start_date")

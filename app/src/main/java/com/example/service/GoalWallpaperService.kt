@@ -110,6 +110,11 @@ class GoalWallpaperService : WallpaperService() {
 
         private val mainHandler = Handler(Looper.getMainLooper())
         private var isReceiverRegistered = false
+        private var isAppStateReceiverRegistered = false
+        private var recoveryRenderPending = false
+
+        // A bounded one-shot recovery for an OEM visibility-callback race, never a loop.
+        private val recoveryRenderRunnable = Runnable { renderRecoveryFrame() }
 
         // Midnight transition runnable (active only while wallpaper is visibly displayed)
         private val midnightRunnable = object : Runnable {
@@ -145,8 +150,23 @@ class GoalWallpaperService : WallpaperService() {
             }
         }
 
+        // Unlike date/time updates, this receiver remains available while the Engine is hidden.
+        private val appStateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == GoalRepository.ACTION_APP_MOVED_TO_BACKGROUND) {
+                    com.example.diagnostics.DiagnosticRecorder.log(
+                        "UI_MOVED_TO_BACKGROUND",
+                        "engineId=$engineId, ready=$isSurfaceReady, visible=$isVisibleState"
+                    )
+                    Log.d(TAG_ENGINE, "Engine[$engineId] UI moved to background; scheduling recovery frame")
+                    scheduleRecoveryRender()
+                }
+            }
+        }
+
         override fun onCreate(surfaceHolder: SurfaceHolder?) {
             super.onCreate(surfaceHolder)
+            registerAppStateReceiver()
             com.example.diagnostics.DiagnosticRecorder.log("ENGINE_ONCREATE", "engineId=$engineId, isPreview=$isPreview")
             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onCreate: isPreview=$isPreview")
             Log.d(TAG_ENGINE, "Engine[$engineId] onCreate: isPreview=$isPreview")
@@ -178,6 +198,9 @@ class GoalWallpaperService : WallpaperService() {
 
                     // Always request render when DataStore updates, regardless of arrival order
                     requestRender("dataStoreUpdated")
+                    if (recoveryRenderPending && state !is GoalLoadState.Loading) {
+                        scheduleRecoveryRender()
+                    }
                 }
             }
 
@@ -297,6 +320,7 @@ class GoalWallpaperService : WallpaperService() {
             Log.d(TAG_TIMELINE, "${t()} Engine[$engineId].onDestroy")
             Log.d(TAG_ENGINE, "Engine[$engineId] onDestroy")
             unregisterTimeReceiver()
+            unregisterAppStateReceiver()
             mainHandler.removeCallbacksAndMessages(null)
             dataCollectJob?.cancel()
             backgroundConfigCollectJob?.cancel()
@@ -368,6 +392,40 @@ class GoalWallpaperService : WallpaperService() {
                 }
             }
 
+            drawFrame(attempt = 1)
+        }
+
+        private fun scheduleRecoveryRender() {
+            recoveryRenderPending = true
+            mainHandler.removeCallbacks(recoveryRenderRunnable)
+            // Let the Recents/launcher transition release its Surface transaction first.
+            mainHandler.postDelayed(recoveryRenderRunnable, 300L)
+        }
+
+        /**
+         * Bypasses only the visibility gate once after the UI goes away. Surface readiness
+         * and durable DataStore state are still required, so this cannot become a render loop.
+         */
+        private fun renderRecoveryFrame() {
+            recoveryRenderPending = false
+            if (!isSurfaceReady) {
+                Log.d(TAG_ENGINE, "Engine[$engineId] Recovery frame skipped: Surface is not ready")
+                com.example.diagnostics.DiagnosticRecorder.log("RECOVERY_RENDER_SKIPPED", "engineId=$engineId, noSurface")
+                return
+            }
+            if (currentLoadState is GoalLoadState.Loading) {
+                Log.d(TAG_ENGINE, "Engine[$engineId] Recovery frame deferred: DataStore is loading")
+                recoveryRenderPending = true
+                return
+            }
+
+            // A new process can have a valid Surface but an OEM-provided false visibility flag.
+            scheduleBackgroundLoadIfNeeded(allowWhenHidden = true)
+            com.example.diagnostics.DiagnosticRecorder.log(
+                "RECOVERY_RENDER",
+                "engineId=$engineId, visible=$isVisibleState, preview=$isPreview"
+            )
+            Log.d(TAG_ENGINE, "Engine[$engineId] Drawing one recovery frame (visible=$isVisibleState)")
             drawFrame(attempt = 1)
         }
 
@@ -495,8 +553,11 @@ class GoalWallpaperService : WallpaperService() {
          * Starts a sampled decode only when an image is configured and the Engine has a drawable
          * surface. Canvas drawing stays fast: until decoding finishes it safely shows black.
          */
-        private fun scheduleBackgroundLoadIfNeeded() {
-            if (!isSurfaceReady || surfaceWidth <= 0 || surfaceHeight <= 0 || (!isVisibleState && !isPreview)) {
+        private fun scheduleBackgroundLoadIfNeeded(allowWhenHidden: Boolean = false) {
+            if (
+                !isSurfaceReady || surfaceWidth <= 0 || surfaceHeight <= 0 ||
+                (!allowWhenHidden && !isVisibleState && !isPreview)
+            ) {
                 return
             }
             if (currentBackgroundConfig.type != BackgroundType.IMAGE) {
@@ -526,7 +587,13 @@ class GoalWallpaperService : WallpaperService() {
                     surfaceHeight == requestedHeight
                 ) {
                     backgroundRenderer.setBitmap(bitmap, requestedWidth, requestedHeight)
-                    requestRender("backgroundBitmapLoaded")
+                    if (isVisibleState || isPreview) {
+                        requestRender("backgroundBitmapLoaded")
+                    } else {
+                        // This decode was explicitly allowed by the one-shot recovery path.
+                        // Post the sampled image once; the cache makes the next draw cheap.
+                        scheduleRecoveryRender()
+                    }
                 } else {
                     bitmap?.takeUnless { it.isRecycled }?.recycle()
                 }
@@ -561,6 +628,28 @@ class GoalWallpaperService : WallpaperService() {
                 }
                 isReceiverRegistered = false
             }
+        }
+
+        private fun registerAppStateReceiver() {
+            if (isAppStateReceiverRegistered) return
+
+            val filter = IntentFilter(GoalRepository.ACTION_APP_MOVED_TO_BACKGROUND)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(appStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(appStateReceiver, filter)
+            }
+            isAppStateReceiverRegistered = true
+        }
+
+        private fun unregisterAppStateReceiver() {
+            if (!isAppStateReceiverRegistered) return
+            try {
+                unregisterReceiver(appStateReceiver)
+            } catch (e: Exception) {
+                Log.w(TAG_ENGINE, "Error unregistering app-state receiver", e)
+            }
+            isAppStateReceiverRegistered = false
         }
 
         private fun scheduleMidnightUpdate() {

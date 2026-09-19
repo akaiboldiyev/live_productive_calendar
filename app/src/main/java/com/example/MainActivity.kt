@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.ui.GoalDotsApp
 import com.example.ui.theme.MyApplicationTheme
+import com.example.data.GoalRepository
 
 class MainActivity : ComponentActivity() {
 
@@ -35,6 +36,19 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "MainActivity onDestroy: isFinishing=$isFinishing")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) {
+            // HyperOS can occasionally omit visible=true for the wallpaper after Recents
+            // dismisses this Activity. The Engine validates its Surface before one retry.
+            sendBroadcast(
+                android.content.Intent(GoalRepository.ACTION_APP_MOVED_TO_BACKGROUND)
+                    .setPackage(packageName)
+            )
+            Log.d(TAG, "MainActivity onStop: sent wallpaper recovery hint")
+        }
     }
 }
 
