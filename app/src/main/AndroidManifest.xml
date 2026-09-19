@@ -26,7 +26,13 @@
 
         <service
             android:name=".service.GoalWallpaperService"
-            android:process=":wallpaper"
+            <!--
+                 Keep the wallpaper outside the app-private ":wallpaper" process name.
+                 HyperOS ProcessSceneCleaner explicitly targets that private process when
+                 the UI task is swiped away. This remains the same APK and UID, while
+                 preserving the existing AndroidX MultiProcess DataStore architecture.
+            -->
+            android:process="com.goaldots.wallpaperhost"
             android:stopWithTask="false"
             android:exported="true"
             android:label="@string/app_name"

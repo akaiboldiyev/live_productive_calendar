@@ -7,6 +7,7 @@ REM Package: com.aistudio.goaldots.wkqn
 REM ==============================================================================
 
 set "APP_ID=com.aistudio.goaldots.wkqn"
+set "WALLPAPER_PROCESS=com.goaldots.wallpaperhost"
 set "SCRIPT_DIR=%~dp0"
 
 REM Prefer the private platform-tools folder shipped beside this script. This means
@@ -108,7 +109,7 @@ set /p MAIN_PID=<"%OUTDIR%\current_main_pid.txt"
 if not defined MAIN_PID set "MAIN_PID=NOT_RUNNING"
 
 set "WALLPAPER_PID="
-"%ADB%" shell pidof %APP_ID%:wallpaper > "%OUTDIR%\current_wallpaper_pid.txt" 2>nul
+"%ADB%" shell pidof %WALLPAPER_PROCESS% > "%OUTDIR%\current_wallpaper_pid.txt" 2>nul
 set /p WALLPAPER_PID=<"%OUTDIR%\current_wallpaper_pid.txt"
 if not defined WALLPAPER_PID set "WALLPAPER_PID=NOT_RUNNING"
 
