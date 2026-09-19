@@ -1,10 +1,14 @@
 package com.example.service
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.WallpaperManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.graphics.Canvas
 import android.os.Build
 import android.os.Handler
@@ -51,6 +55,8 @@ class GoalWallpaperService : WallpaperService() {
         private const val TAG_TIMELINE = "GOAL_TIMELINE"
         private const val TAG_SERVICE = "GOAL_SERVICE"
         private const val TAG_ENGINE = "GOAL_ENGINE"
+        private const val FOREGROUND_NOTIFICATION_ID = 4201
+        private const val FOREGROUND_CHANNEL_ID = "goal_dots_wallpaper"
         private val engineSequence = AtomicInteger(0)
 
         private fun t(): String = "[+${GoalApplication.elapsedSinceProcessStart()}ms]"
@@ -58,6 +64,7 @@ class GoalWallpaperService : WallpaperService() {
 
     override fun onCreate() {
         super.onCreate()
+        startForegroundProtection()
         val wm = WallpaperManager.getInstance(applicationContext)
         val info = wm.wallpaperInfo
         com.example.diagnostics.DiagnosticRecorder.log("WALLPAPERSERVICE_ONCREATE", "activeComponent=${info?.component}")
@@ -66,10 +73,65 @@ class GoalWallpaperService : WallpaperService() {
     }
 
     override fun onDestroy() {
+        stopForegroundProtection()
         super.onDestroy()
         com.example.diagnostics.DiagnosticRecorder.log("WALLPAPERSERVICE_ONDESTROY")
         Log.d(TAG_TIMELINE, "${t()} WallpaperService.onDestroy")
         Log.d(TAG_SERVICE, "GoalWallpaperService onDestroy")
+    }
+
+    /**
+     * HyperOS' recents cleaner explicitly kills every process belonging to the swiped task,
+     * including a bound wallpaper service. Keeping the *existing* service foreground gives the
+     * system a user-visible, higher-priority service rather than adding a second APK or a
+     * parallel watchdog. Any OEM refusal is deliberately non-fatal: WallpaperService still
+     * follows its normal system-managed lifecycle.
+     */
+    private fun startForegroundProtection() {
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        FOREGROUND_CHANNEL_ID,
+                        getString(com.example.R.string.wallpaper_notification_channel_name),
+                        NotificationManager.IMPORTANCE_LOW
+                    ).apply {
+                        description = getString(com.example.R.string.wallpaper_notification_channel_description)
+                        setShowBadge(false)
+                    }
+                )
+            }
+
+            val notification = Notification.Builder(this, FOREGROUND_CHANNEL_ID)
+                .setSmallIcon(com.example.R.drawable.ic_stat_goal_dots)
+                .setContentTitle(getString(com.example.R.string.wallpaper_notification_title))
+                .setContentText(getString(com.example.R.string.wallpaper_notification_text))
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    FOREGROUND_NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(FOREGROUND_NOTIFICATION_ID, notification)
+            }
+            Log.i(TAG_SERVICE, "Wallpaper foreground protection started")
+        } catch (error: Exception) {
+            Log.e(TAG_SERVICE, "Wallpaper foreground protection could not start", error)
+        }
+    }
+
+    private fun stopForegroundProtection() {
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (error: Exception) {
+            Log.w(TAG_SERVICE, "Wallpaper foreground protection could not stop cleanly", error)
+        }
     }
 
     override fun onCreateEngine(): Engine {

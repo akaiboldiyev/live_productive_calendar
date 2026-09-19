@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">Goal Dots</string>
     <string name="wallpaper_description">Visual goal countdown with calendar dots on your wallpaper</string>
+    <string name="wallpaper_notification_channel_name">Live wallpaper</string>
+    <string name="wallpaper_notification_channel_description">Keeps Goal Dots available while your live wallpaper is active</string>
+    <string name="wallpaper_notification_title">Goal Dots wallpaper active</string>
+    <string name="wallpaper_notification_text">Keeping your live wallpaper available</string>
 </resources>

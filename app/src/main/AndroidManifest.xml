@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:name=".GoalApplication"
         android:allowBackup="true"
@@ -34,6 +37,7 @@
             android:name=".service.GoalWallpaperService"
             android:process="com.goaldots.wallpaperhost"
             android:stopWithTask="false"
+            android:foregroundServiceType="specialUse"
             android:exported="true"
             android:label="@string/app_name"
             android:permission="android.permission.BIND_WALLPAPER">
@@ -43,6 +47,9 @@
             <meta-data
                 android:name="android.service.wallpaper"
                 android:resource="@xml/wallpaper" />
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the user-selected live wallpaper renderer available while the wallpaper is active." />
         </service>
     </application>
 
