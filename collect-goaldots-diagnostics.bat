@@ -74,11 +74,9 @@ echo Target Application: %APP_ID%
 echo Output Directory:  %OUTDIR%
 echo.
 
-echo [2/3] Starting continuous logcat capture to %OUTDIR%\logcat_stream.txt...
+echo [2/3] Starting logcat capture to %OUTDIR%\logcat_stream.txt...
 "%ADB%" logcat -c
 type nul > "%OUTDIR%\logcat_stream.txt"
-REM A separate PowerShell helper avoids CMD's unreliable START/redirection parsing.
-start "GoalDots Logcat" /B powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%capture-goaldots-logcat.ps1" -AdbPath "%ADB%" -LogPath "%OUTDIR%\logcat_stream.txt"
 
 echo.
 echo ==============================================================================
@@ -127,6 +125,11 @@ echo [!TIME!] Snapshot #!PADDED_INDEX! -- Main PID: !MAIN_PID! ^| Wallpaper PID:
 
 "%ADB%" shell dumpsys wallpaper > "!PREFIX!_dumpsys_wallpaper.txt" 2>nul
 "%ADB%" shell "dumpsys activity services %APP_ID%" > "!PREFIX!_dumpsys_services.txt" 2>nul
+
+REM Capture every log line produced since the previous snapshot. This avoids a
+REM background process that would survive Ctrl+C while retaining the full session.
+"%ADB%" logcat -d -v time >> "%OUTDIR%\logcat_stream.txt" 2>nul
+"%ADB%" logcat -c
 
 REM Reliable 2-second sleep in Windows CMD
 ping 127.0.0.1 -n 3 >nul 2>&1
