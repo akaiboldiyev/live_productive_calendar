@@ -8,12 +8,15 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
 import com.example.model.AppearanceSettings
-import com.example.model.BackgroundType
 import com.example.model.ColorTheme
+import com.example.model.EyeComfortMode
 import com.example.model.GoalData
 import com.example.model.GoalProgressCalculator
 import com.example.model.GoalSnapshot
 import com.example.model.WallpaperBackgroundConfig
+import com.example.model.WallpaperBackgroundMode
+import com.example.model.WallpaperImageSlot
+import com.example.model.OverlayReadabilityMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -199,14 +202,13 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(showSaveSuccessMessage = false) }
     }
 
-    fun selectBackground(uri: Uri) {
+    fun selectBackground(slot: WallpaperImageSlot, uri: Uri) {
         _uiState.update { it.copy(isBackgroundImporting = true, backgroundError = null) }
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { repository.setImageBackground(uri) }
+            runCatching { repository.setImageBackground(slot, uri) }
                 .onSuccess {
                     _uiState.update {
                         it.copy(
-                            backgroundConfig = it.backgroundConfig.copy(type = BackgroundType.IMAGE),
                             isBackgroundImporting = false,
                             backgroundError = null
                         )
@@ -224,14 +226,13 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun removeBackground() {
+    fun removeBackground(slot: WallpaperImageSlot) {
         _uiState.update { it.copy(isBackgroundImporting = true, backgroundError = null) }
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { repository.removeBackground() }
+            runCatching { repository.removeImageBackground(slot) }
                 .onSuccess {
                     _uiState.update {
                         it.copy(
-                            backgroundConfig = WallpaperBackgroundConfig(),
                             isBackgroundImporting = false
                         )
                     }
@@ -245,6 +246,20 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
+        }
+    }
+
+    fun setBackgroundMode(mode: WallpaperBackgroundMode) = updateBackground { repository.setBackgroundMode(mode) }
+    fun updateSchedule(dayStartMinutes: Int, eveningStartMinutes: Int) = updateBackground { repository.updateSchedule(dayStartMinutes, eveningStartMinutes) }
+    fun setReadabilityMode(mode: OverlayReadabilityMode) = updateBackground { repository.setReadabilityMode(mode) }
+    fun setEyeComfortMode(mode: EyeComfortMode) = updateBackground { repository.setEyeComfortMode(mode) }
+
+    private fun updateBackground(block: suspend () -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { block() }.onFailure { error ->
+                Log.e("GOAL_BACKGROUND", "Background configuration update failed", error)
+                _uiState.update { it.copy(backgroundError = "Could not save background settings.") }
+            }
         }
     }
 

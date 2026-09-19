@@ -118,7 +118,8 @@ class WallpaperRenderer {
         loadState: GoalLoadState,
         snapshot: GoalSnapshot,
         density: Float = 2.5f,
-        drawDefaultBackground: Boolean = true
+        drawDefaultBackground: Boolean = true,
+        overlayColors: OverlayContentColors? = null
     ) {
         if (surfaceWidth <= 0 || surfaceHeight <= 0) return
 
@@ -152,15 +153,15 @@ class WallpaperRenderer {
         val settings = snapshot.goalData?.settings ?: AppearanceSettings()
 
         // Configure theme paints
-        completedDotPaint.color = theme.completedDotColor
-        futureDotPaint.color = theme.futureDotColor
-        currentDotPaint.color = theme.currentDotColor
-        currentDotRingPaint.color = theme.currentDotRingColor
+        completedDotPaint.color = overlayColors?.completedDot ?: theme.completedDotColor
+        futureDotPaint.color = overlayColors?.futureDot ?: theme.futureDotColor
+        currentDotPaint.color = overlayColors?.currentDot ?: theme.currentDotColor
+        currentDotRingPaint.color = overlayColors?.currentDotRing ?: theme.currentDotRingColor
         currentDotRingPaint.strokeWidth = (2f * density).coerceAtLeast(1.5f)
 
-        headerTextPaint.color = theme.accentTextColor
-        titleLayoutPaint.color = theme.primaryTextColor
-        footerTextPaint.color = theme.secondaryTextColor
+        headerTextPaint.color = overlayColors?.accentText ?: theme.accentTextColor
+        titleLayoutPaint.color = overlayColors?.primaryText ?: theme.primaryTextColor
+        footerTextPaint.color = overlayColors?.secondaryText ?: theme.secondaryTextColor
 
         // Responsive font sizing based on visible viewport width
         val headerSize = (viewport.width * 0.038f).coerceIn(12f * density, 18f * density)

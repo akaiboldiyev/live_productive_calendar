@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.WallpaperManager
+import android.app.TimePickerDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -76,6 +77,7 @@ import com.example.ui.components.DatePickerCards
 import com.example.ui.components.GoalStatsCard
 import com.example.ui.components.OemInfoDialog
 import com.example.ui.components.WallpaperLivePreview
+import com.example.model.WallpaperImageSlot
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,10 +89,11 @@ fun GoalDotsApp(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var pendingPhotoSlot by remember { mutableStateOf(WallpaperImageSlot.SINGLE) }
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        if (uri != null) viewModel.selectBackground(uri)
+        if (uri != null) viewModel.selectBackground(pendingPhotoSlot, uri)
     }
 
     var showInfoDialog by remember { mutableStateOf(false) }
@@ -344,12 +347,23 @@ fun GoalDotsApp(
                 config = uiState.backgroundConfig,
                 isImporting = uiState.isBackgroundImporting,
                 error = uiState.backgroundError,
-                onChoosePhoto = {
+                onModeSelected = viewModel::setBackgroundMode,
+                onChoosePhoto = { slot ->
+                    pendingPhotoSlot = slot
                     photoPickerLauncher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
-                onUseDefaultBlack = { viewModel.removeBackground() }
+                onRemovePhoto = viewModel::removeBackground,
+                onChooseTime = { isDay ->
+                    val current = if (isDay) uiState.backgroundConfig.dayStartMinutes else uiState.backgroundConfig.eveningStartMinutes
+                    TimePickerDialog(context, { _, hour, minute ->
+                        if (isDay) viewModel.updateSchedule(hour * 60 + minute, uiState.backgroundConfig.eveningStartMinutes)
+                        else viewModel.updateSchedule(uiState.backgroundConfig.dayStartMinutes, hour * 60 + minute)
+                    }, current / 60, current % 60, true).show()
+                },
+                onReadabilitySelected = viewModel::setReadabilityMode,
+                onEyeComfortSelected = viewModel::setEyeComfortMode
             )
 
             // 6. Save Changes Button

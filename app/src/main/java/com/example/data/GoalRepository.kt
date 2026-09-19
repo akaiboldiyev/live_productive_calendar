@@ -18,7 +18,10 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
-import com.example.model.BackgroundType
+import com.example.model.EyeComfortMode
+import com.example.model.OverlayReadabilityMode
+import com.example.model.WallpaperBackgroundMode
+import com.example.model.WallpaperImageSlot
 import com.example.model.GoalData
 import com.example.model.WallpaperBackgroundConfig
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +63,16 @@ class GoalRepository(private val context: Context) {
         private val KEY_SHOW_HEADER = booleanPreferencesKey("show_header")
         private val KEY_VERTICAL_BIAS = floatPreferencesKey("vertical_bias")
         private val KEY_BACKGROUND_TYPE = stringPreferencesKey("background_type")
+        private val KEY_BACKGROUND_MODE = stringPreferencesKey("background_mode")
+        private val KEY_DAY_START_MINUTES = longPreferencesKey("background_day_start_minutes")
+        private val KEY_EVENING_START_MINUTES = longPreferencesKey("background_evening_start_minutes")
+        private val KEY_HAS_SINGLE_IMAGE = booleanPreferencesKey("background_has_single_image")
+        private val KEY_HAS_DAY_IMAGE = booleanPreferencesKey("background_has_day_image")
+        private val KEY_HAS_EVENING_IMAGE = booleanPreferencesKey("background_has_evening_image")
+        private val KEY_READABILITY_MODE = stringPreferencesKey("background_readability_mode")
+        private val KEY_EYE_COMFORT_MODE = stringPreferencesKey("background_eye_comfort_mode")
         private val KEY_BACKGROUND_REVISION = longPreferencesKey("background_revision")
+        private val KEY_BACKGROUND_IMAGE_REVISION = longPreferencesKey("background_image_revision")
 
         @Volatile
         private var INSTANCE: GoalRepository? = null
@@ -204,10 +216,21 @@ class GoalRepository(private val context: Context) {
         }
         .map { preferences ->
             val revision = preferences[KEY_BACKGROUND_REVISION] ?: 0L
-            when (preferences[KEY_BACKGROUND_TYPE]) {
-                BackgroundType.IMAGE.name -> WallpaperBackgroundConfig(BackgroundType.IMAGE, revision)
-                else -> WallpaperBackgroundConfig(BackgroundType.DEFAULT_BLACK, revision)
-            }
+            val oldImage = preferences[KEY_BACKGROUND_TYPE] == "IMAGE"
+            val mode = preferences[KEY_BACKGROUND_MODE].asEnumOrNull<WallpaperBackgroundMode>()
+                ?: if (oldImage) WallpaperBackgroundMode.SINGLE_IMAGE else WallpaperBackgroundMode.DEFAULT_BLACK
+            WallpaperBackgroundConfig(
+                mode = mode,
+                dayStartMinutes = (preferences[KEY_DAY_START_MINUTES] ?: (7 * 60).toLong()).toInt().coerceIn(0, 1439),
+                eveningStartMinutes = (preferences[KEY_EVENING_START_MINUTES] ?: (19 * 60).toLong()).toInt().coerceIn(0, 1439),
+                hasSingleImage = preferences[KEY_HAS_SINGLE_IMAGE] ?: oldImage,
+                hasDayImage = preferences[KEY_HAS_DAY_IMAGE] ?: false,
+                hasEveningImage = preferences[KEY_HAS_EVENING_IMAGE] ?: false,
+                readabilityMode = preferences[KEY_READABILITY_MODE].asEnumOrNull<OverlayReadabilityMode>() ?: OverlayReadabilityMode.AUTO,
+                eyeComfortMode = preferences[KEY_EYE_COMFORT_MODE].asEnumOrNull<EyeComfortMode>() ?: EyeComfortMode.OFF,
+                imageRevision = preferences[KEY_BACKGROUND_IMAGE_REVISION] ?: revision,
+                revision = revision
+            )
         }
 
     suspend fun saveGoal(goal: GoalData) {
@@ -264,23 +287,76 @@ class GoalRepository(private val context: Context) {
      * Imports user-selected media into app-private storage before publishing IMAGE to the
      * multi-process configuration. The wallpaper service never depends on the picker Uri.
      */
-    suspend fun setImageBackground(uri: Uri) {
-        Log.i("GOAL_BACKGROUND", "Background selected")
-        WallpaperBackgroundStorage.copyFromUri(context, uri)
+    suspend fun setImageBackground(slot: WallpaperImageSlot, uri: Uri) {
+        Log.i("GOAL_BACKGROUND", "Background selected for $slot")
+        WallpaperBackgroundStorage.copyFromUri(context, uri, slot)
         dataStore.edit { preferences ->
-            preferences[KEY_BACKGROUND_TYPE] = BackgroundType.IMAGE.name
-            preferences[KEY_BACKGROUND_REVISION] = (preferences[KEY_BACKGROUND_REVISION] ?: 0L) + 1L
+            setImageFlag(preferences, slot, true)
+            incrementImageRevision(preferences)
+            incrementBackgroundRevision(preferences)
         }
         sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
     }
 
-    suspend fun removeBackground() {
+    suspend fun removeImageBackground(slot: WallpaperImageSlot) {
         dataStore.edit { preferences ->
-            preferences[KEY_BACKGROUND_TYPE] = BackgroundType.DEFAULT_BLACK.name
-            preferences[KEY_BACKGROUND_REVISION] = (preferences[KEY_BACKGROUND_REVISION] ?: 0L) + 1L
+            setImageFlag(preferences, slot, false)
+            incrementImageRevision(preferences)
+            incrementBackgroundRevision(preferences)
+        }
+        WallpaperBackgroundStorage.delete(context, slot)
+        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
+    }
+
+    suspend fun setBackgroundMode(mode: WallpaperBackgroundMode) {
+        dataStore.edit { preferences ->
+            preferences[KEY_BACKGROUND_MODE] = mode.name
+            incrementBackgroundRevision(preferences)
+        }
+        Log.i("GOAL_BACKGROUND", "Background mode changed to $mode")
+        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
+    }
+
+    suspend fun updateSchedule(dayStartMinutes: Int, eveningStartMinutes: Int) {
+        dataStore.edit { preferences ->
+            preferences[KEY_DAY_START_MINUTES] = dayStartMinutes.coerceIn(0, 1439).toLong()
+            preferences[KEY_EVENING_START_MINUTES] = eveningStartMinutes.coerceIn(0, 1439).toLong()
+            incrementBackgroundRevision(preferences)
+        }
+        Log.i("GOAL_BACKGROUND", "Time schedule changed")
+        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
+    }
+
+    suspend fun setReadabilityMode(mode: OverlayReadabilityMode) {
+        dataStore.edit { preferences ->
+            preferences[KEY_READABILITY_MODE] = mode.name
+            incrementBackgroundRevision(preferences)
         }
         sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
-        WallpaperBackgroundStorage.delete(context)
+    }
+
+    suspend fun setEyeComfortMode(mode: EyeComfortMode) {
+        dataStore.edit { preferences ->
+            preferences[KEY_EYE_COMFORT_MODE] = mode.name
+            incrementBackgroundRevision(preferences)
+        }
+        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
+    }
+
+    private fun setImageFlag(preferences: androidx.datastore.preferences.core.MutablePreferences, slot: WallpaperImageSlot, value: Boolean) {
+        when (slot) {
+            WallpaperImageSlot.SINGLE -> preferences[KEY_HAS_SINGLE_IMAGE] = value
+            WallpaperImageSlot.DAY -> preferences[KEY_HAS_DAY_IMAGE] = value
+            WallpaperImageSlot.EVENING -> preferences[KEY_HAS_EVENING_IMAGE] = value
+        }
+    }
+
+    private fun incrementBackgroundRevision(preferences: androidx.datastore.preferences.core.MutablePreferences) {
+        preferences[KEY_BACKGROUND_REVISION] = (preferences[KEY_BACKGROUND_REVISION] ?: 0L) + 1L
+    }
+
+    private fun incrementImageRevision(preferences: androidx.datastore.preferences.core.MutablePreferences) {
+        preferences[KEY_BACKGROUND_IMAGE_REVISION] = (preferences[KEY_BACKGROUND_IMAGE_REVISION] ?: 0L) + 1L
     }
 
     private fun sendUpdateBroadcast(action: String) {
@@ -290,4 +366,8 @@ class GoalRepository(private val context: Context) {
             Log.e(TAG_SAVE, "Failed to send update broadcast for $action", e)
         }
     }
+}
+
+private inline fun <reified T : Enum<T>> String?.asEnumOrNull(): T? = this?.let { value ->
+    enumValues<T>().firstOrNull { it.name == value }
 }

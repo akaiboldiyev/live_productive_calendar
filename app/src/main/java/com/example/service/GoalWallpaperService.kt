@@ -21,12 +21,14 @@ import com.example.GoalApplication
 import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
 import com.example.data.WallpaperBackgroundStorage
-import com.example.model.BackgroundType
+import com.example.model.BackgroundSelection
+import com.example.model.WallpaperSchedule
 import com.example.model.GoalData
 import com.example.model.GoalProgressCalculator
 import com.example.model.WallpaperBackgroundConfig
 import com.example.render.ViewportBounds
 import com.example.render.WallpaperBackgroundRenderer
+import com.example.render.OverlayReadabilityRenderer
 import com.example.render.WallpaperRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,7 @@ import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 
@@ -146,6 +149,7 @@ class GoalWallpaperService : WallpaperService() {
 
         private val renderer = WallpaperRenderer()
         private val backgroundRenderer = WallpaperBackgroundRenderer()
+        private val readabilityRenderer = OverlayReadabilityRenderer()
         private val repository by lazy { GoalRepository.getInstance(applicationContext) }
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private var dataCollectJob: Job? = null
@@ -165,6 +169,7 @@ class GoalWallpaperService : WallpaperService() {
         private var cachedGoal: GoalData? = null
         private var lastRenderedDate: LocalDate? = null
         private var currentBackgroundConfig = WallpaperBackgroundConfig()
+        private var currentBackgroundSelection = BackgroundSelection()
 
         // Parallax and viewport bounds
         private var currentXOffset: Float = 0f
@@ -177,6 +182,15 @@ class GoalWallpaperService : WallpaperService() {
 
         // A bounded one-shot recovery for an OEM visibility-callback race, never a loop.
         private val recoveryRenderRunnable = Runnable { renderRecoveryFrame() }
+
+        // One exact next-period wake-up while visible; no polling or rendering loop.
+        private val backgroundTransitionRunnable = Runnable {
+            if (isVisibleState) {
+                scheduleBackgroundLoadIfNeeded()
+                requestRender("scheduledBackgroundTransition")
+                scheduleBackgroundTransition()
+            }
+        }
 
         // Midnight transition runnable (active only while wallpaper is visibly displayed)
         private val midnightRunnable = object : Runnable {
@@ -207,6 +221,8 @@ class GoalWallpaperService : WallpaperService() {
                     requestRender("goalUpdatedBroadcast")
                 } else if (isVisibleState) {
                     Log.d(TAG_ENGINE, "Engine[$engineId] Time/Date broadcast received ($action)")
+                    scheduleBackgroundLoadIfNeeded()
+                    scheduleBackgroundTransition()
                     requestRender("systemTimeChanged")
                 }
             }
@@ -258,6 +274,10 @@ class GoalWallpaperService : WallpaperService() {
                         else -> { /* retain previous or remain null while Loading/Error */ }
                     }
 
+                    // A goal layout change can move the visible content area; refresh the cached
+                    // contrast decision once here, never from drawFrame().
+                    updateReadability()
+
                     // Always request render when DataStore updates, regardless of arrival order
                     requestRender("dataStoreUpdated")
                     if (recoveryRenderPending && state !is GoalLoadState.Loading) {
@@ -270,12 +290,14 @@ class GoalWallpaperService : WallpaperService() {
             // bitmap itself remains app-private and is independently rebuilt after process death.
             backgroundConfigCollectJob = scope.launch {
                 repository.backgroundConfigFlow.collect { config ->
-                    val changed = currentBackgroundConfig != config
+                    val imageChanged = currentBackgroundConfig.imageRevision != config.imageRevision
                     currentBackgroundConfig = config
-                    if (changed) {
+                    if (imageChanged) {
                         backgroundRenderer.invalidateCache()
                     }
+                    updateReadability()
                     scheduleBackgroundLoadIfNeeded()
+                    scheduleBackgroundTransition()
                     requestRender("backgroundConfigUpdated")
                 }
             }
@@ -358,10 +380,12 @@ class GoalWallpaperService : WallpaperService() {
                 registerTimeReceiver()
                 scheduleMidnightUpdate()
                 scheduleBackgroundLoadIfNeeded()
+                scheduleBackgroundTransition()
                 requestRender("onVisibilityChanged(true)")
             } else {
                 unregisterTimeReceiver()
                 mainHandler.removeCallbacks(midnightRunnable)
+                mainHandler.removeCallbacks(backgroundTransitionRunnable)
             }
         }
 
@@ -373,6 +397,7 @@ class GoalWallpaperService : WallpaperService() {
             Log.d(TAG_ENGINE, "Engine[$engineId] onSurfaceDestroyed")
             unregisterTimeReceiver()
             mainHandler.removeCallbacks(midnightRunnable)
+            mainHandler.removeCallbacks(backgroundTransitionRunnable)
         }
 
         override fun onDestroy() {
@@ -523,12 +548,10 @@ class GoalWallpaperService : WallpaperService() {
                 com.example.diagnostics.DiagnosticRecorder.log("LOCK_CANVAS_SUCCESS", "engineId=$engineId, attempt=$attempt")
                 Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas SUCCESS (attempt $attempt)")
                 try {
-                    backgroundRenderer.drawBackground(
-                        canvas = canvas,
-                        config = currentBackgroundConfig,
-                        width = surfaceWidth,
-                        height = surfaceHeight
-                    )
+                    val selection = resolveBackgroundSelection()
+                    val eyeComfort = WallpaperSchedule.isEyeComfortEnabled(currentBackgroundConfig, selection.period)
+                    backgroundRenderer.drawBackground(canvas, selection.hasImage, eyeComfort, surfaceWidth, surfaceHeight)
+                    readabilityRenderer.drawOverlayReadabilityLayer(canvas, viewport)
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render START (loadState=${currentLoadState::class.simpleName}, dots=${snapshot.totalDots})")
                     renderer.render(
                         canvas = canvas,
@@ -538,7 +561,8 @@ class GoalWallpaperService : WallpaperService() {
                         loadState = currentLoadState,
                         snapshot = snapshot,
                         density = density,
-                        drawDefaultBackground = false
+                        drawDefaultBackground = false,
+                        overlayColors = readabilityRenderer.currentStyle().colors
                     )
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render END")
                 } catch (e: Exception) {
@@ -622,22 +646,29 @@ class GoalWallpaperService : WallpaperService() {
             ) {
                 return
             }
-            if (currentBackgroundConfig.type != BackgroundType.IMAGE) {
+            val selection = resolveBackgroundSelection()
+            if (!selection.hasImage || selection.slot == null) {
                 backgroundLoadJob?.cancel()
+                updateReadability()
                 return
             }
-            if (backgroundRenderer.isCachedFor(currentBackgroundConfig, surfaceWidth, surfaceHeight)) {
+            val cacheKey = "${selection.slot}:${currentBackgroundConfig.imageRevision}"
+            if (backgroundRenderer.isCachedFor(cacheKey, surfaceWidth, surfaceHeight)) {
+                Log.d(TAG_ENGINE, "Engine[$engineId] Background bitmap cache hit: $cacheKey")
+                updateReadability()
                 return
             }
 
             backgroundLoadJob?.cancel()
             val requestedConfig = currentBackgroundConfig
+            val requestedSelection = selection
+            val requestedCacheKey = cacheKey
             val requestedWidth = surfaceWidth
             val requestedHeight = surfaceHeight
             backgroundLoadJob = scope.launch {
                 val bitmap = withContext(Dispatchers.IO) {
                     WallpaperBackgroundRenderer.decodeBitmap(
-                        WallpaperBackgroundStorage.backgroundFile(applicationContext),
+                        WallpaperBackgroundStorage.imageFileOrLegacy(applicationContext, requestedSelection.slot!!),
                         requestedWidth,
                         requestedHeight
                     )
@@ -645,10 +676,12 @@ class GoalWallpaperService : WallpaperService() {
                 if (
                     isSurfaceReady &&
                     currentBackgroundConfig == requestedConfig &&
+                    resolveBackgroundSelection() == requestedSelection &&
                     surfaceWidth == requestedWidth &&
                     surfaceHeight == requestedHeight
                 ) {
-                    backgroundRenderer.setBitmap(bitmap, requestedWidth, requestedHeight)
+                    backgroundRenderer.setBitmap(bitmap, requestedCacheKey, requestedWidth, requestedHeight)
+                    updateReadability()
                     if (isVisibleState || isPreview) {
                         requestRender("backgroundBitmapLoaded")
                     } else {
@@ -720,6 +753,36 @@ class GoalWallpaperService : WallpaperService() {
             val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay()
             val millisUntilMidnight = Duration.between(now, nextMidnight).toMillis() + 150L
             mainHandler.postDelayed(midnightRunnable, millisUntilMidnight.coerceAtLeast(1000L))
+        }
+
+        private fun resolveBackgroundSelection(): BackgroundSelection {
+            val selection = WallpaperSchedule.select(currentBackgroundConfig, LocalTime.now())
+            if (selection != currentBackgroundSelection) {
+                Log.i(TAG_ENGINE, "Engine[$engineId] ${selection.period ?: "default"} background selected: ${selection.slot ?: "black fallback"}")
+                currentBackgroundSelection = selection
+                backgroundRenderer.invalidateCache()
+                updateReadability()
+            }
+            return selection
+        }
+
+        private fun updateReadability() {
+            val selection = WallpaperSchedule.select(currentBackgroundConfig, LocalTime.now())
+            val eyeComfort = WallpaperSchedule.isEyeComfortEnabled(currentBackgroundConfig, selection.period)
+            readabilityRenderer.update(backgroundRenderer.currentBitmap(), currentBackgroundConfig.readabilityMode, eyeComfort)
+            Log.d(TAG_ENGINE, "Engine[$engineId] Eye comfort ${if (eyeComfort) "enabled" else "disabled"}")
+        }
+
+        private fun scheduleBackgroundTransition() {
+            mainHandler.removeCallbacks(backgroundTransitionRunnable)
+            if (!isVisibleState || currentBackgroundConfig.mode != com.example.model.WallpaperBackgroundMode.SCHEDULED_IMAGES) return
+            val now = LocalDateTime.now()
+            val today = now.toLocalDate()
+            val candidates = listOf(currentBackgroundConfig.dayStartMinutes, currentBackgroundConfig.eveningStartMinutes)
+                .map { minutes -> today.atStartOfDay().plusMinutes(minutes.toLong()) }
+                .map { if (it.isAfter(now)) it else it.plusDays(1) }
+            val next = candidates.minByOrNull { it } ?: return
+            mainHandler.postDelayed(backgroundTransitionRunnable, (Duration.between(now, next).toMillis() + 150L).coerceAtLeast(1_000L))
         }
     }
 }

@@ -1,62 +1,48 @@
-name: Build Android APK
+name: Publish Goal Dots release
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-debug-apk:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android API 34 test platform
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-        run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-34"
-
-      # This project intentionally uses a pinned Gradle installation because its
-      # repository does not currently include the Gradle wrapper files.
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Build installable debug APK
-        run: gradle :app:assembleDebug --no-daemon
-
-      - name: Run deterministic unit tests
+      - name: Restore the stable release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          gradle :app:testDebugUnitTest \
-            --tests com.example.GoalProgressCalculatorTest \
-            --tests com.example.WallpaperBackgroundRendererTest \
-            --no-daemon
+          test -n "$KEYSTORE_BASE64" || { echo "Missing KEYSTORE_BASE64 release secret"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/goal-dots-release.jks"
 
-      # Existing screenshot/Robolectric tests use host-specific native and SDK behaviour.
-      # Keep their result visible in Actions, but do not withhold an APK that has compiled,
-      # packaged, and passed the deterministic domain/background tests.
-      - name: Run inherited Robolectric tests (non-blocking)
-        continue-on-error: true
-        run: gradle :app:testDebugUnitTest --no-daemon
+      - name: Test and build the signed release APK
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/goal-dots-release.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$STORE_PASSWORD" && test -n "$KEY_PASSWORD" || { echo "Missing signing password secret"; exit 1; }
+          gradle :app:testDebugUnitTest --tests com.example.GoalProgressCalculatorTest --tests com.example.WallpaperBackgroundRendererTest --tests com.example.WallpaperScheduleTest --no-daemon
+          gradle :app:assembleRelease --no-daemon
 
-      - name: Upload installable debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: goal-dots-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 30
+      - name: Publish the one user-facing APK to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" app/build/outputs/apk/release/app-release.apk#Goal-Dots.apk --title "Goal Dots ${TAG#v}" --generate-notes

@@ -5,11 +5,10 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.media.ExifInterface
 import android.util.Log
-import com.example.model.BackgroundType
-import com.example.model.WallpaperBackgroundConfig
 import java.io.File
 import kotlin.math.ceil
 import kotlin.math.max
@@ -119,18 +118,19 @@ class WallpaperBackgroundRenderer {
 
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private var cachedBitmap: Bitmap? = null
+    private var cachedKey: String? = null
     private var cachedWidth = 0
     private var cachedHeight = 0
     private var fallbackLogged = false
 
-    fun isCachedFor(config: WallpaperBackgroundConfig, width: Int, height: Int): Boolean =
-        config.type == BackgroundType.IMAGE &&
-            cachedBitmap?.isRecycled == false &&
+    fun isCachedFor(key: String, width: Int, height: Int): Boolean =
+        cachedKey == key && cachedBitmap?.isRecycled == false &&
             cachedWidth == width && cachedHeight == height
 
-    fun setBitmap(bitmap: Bitmap?, width: Int, height: Int) {
+    fun setBitmap(bitmap: Bitmap?, key: String, width: Int, height: Int) {
         clearCache(logInvalidation = false)
         cachedBitmap = bitmap
+        cachedKey = key
         cachedWidth = width
         cachedHeight = height
         fallbackLogged = false
@@ -138,9 +138,11 @@ class WallpaperBackgroundRenderer {
 
     fun invalidateCache() = clearCache(logInvalidation = true)
 
-    fun drawBackground(canvas: Canvas, config: WallpaperBackgroundConfig, width: Int, height: Int) {
+    fun currentBitmap(): Bitmap? = cachedBitmap?.takeUnless { it.isRecycled }
+
+    fun drawBackground(canvas: Canvas, hasActiveImage: Boolean, eyeComfortEnabled: Boolean, width: Int, height: Int) {
         val bitmap = cachedBitmap
-        if (config.type != BackgroundType.IMAGE || bitmap == null || bitmap.isRecycled) {
+        if (!hasActiveImage || bitmap == null || bitmap.isRecycled) {
             canvas.drawColor(Color.BLACK)
             if (!fallbackLogged) {
                 Log.w(TAG, "Background fallback used")
@@ -159,6 +161,10 @@ class WallpaperBackgroundRenderer {
             (height + scaledHeight) / 2f
         )
         canvas.drawBitmap(bitmap, null, destination, bitmapPaint)
+        if (eyeComfortEnabled) {
+            // A single translucent warm layer is cheaper and safer than transforming bitmap pixels.
+            canvas.drawColor(Color.argb(68, 64, 34, 8), PorterDuff.Mode.SRC_OVER)
+        }
     }
 
     fun release() = clearCache(logInvalidation = false)
@@ -166,6 +172,7 @@ class WallpaperBackgroundRenderer {
     private fun clearCache(logInvalidation: Boolean) {
         cachedBitmap?.takeUnless { it.isRecycled }?.recycle()
         cachedBitmap = null
+        cachedKey = null
         cachedWidth = 0
         cachedHeight = 0
         fallbackLogged = false
