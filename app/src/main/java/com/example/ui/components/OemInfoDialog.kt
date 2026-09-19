@@ -39,22 +39,22 @@ fun OemInfoDialog(
                     .padding(vertical = 4.dp)
             ) {
                 InfoSection(
+                    title = "Quick start",
+                    content = "1. Write your goal and choose the dates.\n2. Optionally choose a black background or photos.\n3. Tap 'Set as Live Wallpaper', then confirm it in Android settings."
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                InfoSection(
                     title = "Lock Screen & Home Screen Support",
-                    content = "When you tap 'Set as Wallpaper', Android opens the system wallpaper preview. Tap 'Apply' or 'Set Wallpaper'. On most devices, choose 'Home and Lock Screen' so your goal is visible whenever you glance at your phone."
+                    content = "When Android opens the wallpaper preview, tap 'Apply' or 'Set Wallpaper'. On most devices, choose 'Home and Lock Screen' so your goal is visible whenever you glance at your phone."
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 InfoSection(
-                    title = "Device-Specific Instructions",
-                    content = "• Samsung Galaxy: In the preview, select 'Set on Lock and Home screens'.\n• Xiaomi / HyperOS / MIUI: Ensure you select 'Both screens' when applying.\n• Google Pixel: Choose 'Home and lock screens'."
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                InfoSection(
-                    title = "Zero Battery Drain Architecture",
-                    content = "Goal Dots does not run any background loops, animations, or foreground services. It renders only when your screen turns on and updates cleanly at midnight. Battery consumption is effectively 0%."
+                    title = "Keeping your wallpaper active",
+                    content = "While Goal Dots is active, it keeps a small notification. On HyperOS this helps keep your wallpaper in place after you close the app."
                 )
             }
         },

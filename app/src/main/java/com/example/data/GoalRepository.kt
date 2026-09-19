@@ -19,6 +19,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
 import com.example.model.OverlayReadabilityMode
+import com.example.model.OnboardingDecision
 import com.example.model.WallpaperBackgroundMode
 import com.example.model.WallpaperImageSlot
 import com.example.model.GoalData
@@ -61,6 +62,7 @@ class GoalRepository(private val context: Context) {
         private val KEY_SHOW_REMAINING = booleanPreferencesKey("show_remaining")
         private val KEY_SHOW_HEADER = booleanPreferencesKey("show_header")
         private val KEY_VERTICAL_BIAS = floatPreferencesKey("vertical_bias")
+        private val KEY_ONBOARDING_SEEN = booleanPreferencesKey("onboarding_seen")
         private val KEY_BACKGROUND_TYPE = stringPreferencesKey("background_type")
         private val KEY_BACKGROUND_MODE = stringPreferencesKey("background_mode")
         private val KEY_DAY_START_MINUTES = longPreferencesKey("background_day_start_minutes")
@@ -206,6 +208,35 @@ class GoalRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Stored beside the goal, rather than in Activity state. A pre-existing complete goal
+     * is treated as having seen onboarding so upgrades never interrupt an existing user.
+     */
+    val shouldShowOnboardingFlow: Flow<Boolean> = dataStore.data
+        .map { preferences ->
+            OnboardingDecision.shouldShow(
+                onboardingSeen = preferences[KEY_ONBOARDING_SEEN] ?: false,
+                hasSavedGoal = hasCompleteGoal(preferences)
+            )
+        }
+        .catch { exception ->
+            // Never interrupt an established user with onboarding if storage is briefly unavailable.
+            Log.e(TAG_DATASTORE, "Unable to read onboarding state", exception)
+            emit(false)
+        }
+
+    suspend fun markOnboardingSeen() {
+        dataStore.edit { preferences -> preferences[KEY_ONBOARDING_SEEN] = true }
+    }
+
+    suspend fun markOnboardingSeenForExistingGoal() {
+        dataStore.edit { preferences ->
+            if (!(preferences[KEY_ONBOARDING_SEEN] ?: false) && hasCompleteGoal(preferences)) {
+                preferences[KEY_ONBOARDING_SEEN] = true
+            }
+        }
+    }
+
     /** Uses the same multi-process DataStore as the goal configuration. */
     val backgroundConfigFlow: Flow<WallpaperBackgroundConfig> = dataStore.data
         .catch { exception ->
@@ -244,6 +275,7 @@ class GoalRepository(private val context: Context) {
             preferences[KEY_SHOW_REMAINING] = goal.settings.showRemainingDays
             preferences[KEY_SHOW_HEADER] = goal.settings.showStatusHeader
             preferences[KEY_VERTICAL_BIAS] = goal.settings.verticalBias
+            preferences[KEY_ONBOARDING_SEEN] = true
         }
         Log.d(TAG_SAVE, "saveGoal DataStore edit completed successfully for '${goal.name}'")
         try {
@@ -339,6 +371,11 @@ class GoalRepository(private val context: Context) {
             WallpaperImageSlot.EVENING -> preferences[KEY_HAS_EVENING_IMAGE] = value
         }
     }
+
+    private fun hasCompleteGoal(preferences: Preferences): Boolean =
+        !preferences[KEY_GOAL_NAME].isNullOrBlank() &&
+            !preferences[KEY_START_DATE].isNullOrBlank() &&
+            !preferences[KEY_END_DATE].isNullOrBlank()
 
     private fun incrementBackgroundRevision(preferences: androidx.datastore.preferences.core.MutablePreferences) {
         preferences[KEY_BACKGROUND_REVISION] = (preferences[KEY_BACKGROUND_REVISION] ?: 0L) + 1L

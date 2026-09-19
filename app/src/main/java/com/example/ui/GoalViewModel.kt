@@ -39,7 +39,10 @@ data class GoalUiState(
     val showLockscreenOverlay: Boolean = false,
     val backgroundConfig: WallpaperBackgroundConfig = WallpaperBackgroundConfig(),
     val isBackgroundImporting: Boolean = false,
-    val backgroundError: String? = null
+    val backgroundError: String? = null,
+    /** Loaded from the existing persistent repository; never inferred from Activity lifetime. */
+    val onboardingReady: Boolean = false,
+    val shouldShowOnboarding: Boolean = false
 ) {
     val totalDays: Int
         get() = GoalProgressCalculator.calculateTotalDays(startDate, endDate)
@@ -93,12 +96,14 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
                                 validationError = null
                             )
                         }
+                        viewModelScope.launch(Dispatchers.IO) {
+                            repository.markOnboardingSeenForExistingGoal()
+                        }
                     }
                     is GoalLoadState.NoGoal -> {
                         _uiState.update { current ->
                             if (current.goalName.isEmpty()) {
                                 current.copy(
-                                    goalName = "Build a profitable startup",
                                     startDate = LocalDate.now(),
                                     endDate = LocalDate.now().plusDays(179),
                                     isSaved = false
@@ -122,6 +127,13 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
             repository.backgroundConfigFlow.collect { config ->
                 _uiState.update { current ->
                     current.copy(backgroundConfig = config, backgroundError = null)
+                }
+            }
+        }
+        viewModelScope.launch {
+            repository.shouldShowOnboardingFlow.collect { shouldShow ->
+                _uiState.update { current ->
+                    current.copy(onboardingReady = true, shouldShowOnboarding = shouldShow)
                 }
             }
         }
@@ -252,6 +264,10 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
     fun updateSchedule(dayStartMinutes: Int, eveningStartMinutes: Int) = updateBackground { repository.updateSchedule(dayStartMinutes, eveningStartMinutes) }
     fun setReadabilityMode(mode: OverlayReadabilityMode) = updateBackground { repository.setReadabilityMode(mode) }
 
+    fun markOnboardingSeen() {
+        viewModelScope.launch(Dispatchers.IO) { repository.markOnboardingSeen() }
+    }
+
     private fun updateBackground(block: suspend () -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { block() }.onFailure { error ->
@@ -320,7 +336,9 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
                     startDate = LocalDate.now(),
                     endDate = LocalDate.now().plusDays(179),
                     isSaved = false,
-                    backgroundConfig = current.backgroundConfig
+                    backgroundConfig = current.backgroundConfig,
+                    onboardingReady = current.onboardingReady,
+                    shouldShowOnboarding = current.shouldShowOnboarding
                 )
             }
         }

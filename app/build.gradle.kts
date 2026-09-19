@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.goaldots.wkqn"
     minSdk = 26
     targetSdk = 36
-    versionCode = 6
-    versionName = "3.2.1"
+    versionCode = 7
+    versionName = "3.3"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

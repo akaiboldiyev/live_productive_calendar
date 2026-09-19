@@ -40,6 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -62,10 +63,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +82,7 @@ import com.example.ui.components.BackgroundCard
 import com.example.ui.components.DatePickerCards
 import com.example.ui.components.GoalStatsCard
 import com.example.ui.components.OemInfoDialog
+import com.example.ui.components.OnboardingFlow
 import com.example.ui.components.WallpaperLivePreview
 import com.example.model.WallpaperImageSlot
 import kotlinx.coroutines.launch
@@ -91,16 +96,39 @@ fun GoalDotsApp(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val goalFormRequester = remember { BringIntoViewRequester() }
+    var onboardingInitialized by rememberSaveable { mutableStateOf(false) }
+    var showOnboarding by rememberSaveable { mutableStateOf(false) }
+    var onboardingStep by rememberSaveable { mutableStateOf(1) }
+    var focusGoalForm by rememberSaveable { mutableStateOf(false) }
     var pendingPhotoSlot by remember { mutableStateOf(WallpaperImageSlot.SINGLE) }
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        if (uri != null) viewModel.selectBackground(pendingPhotoSlot, uri)
+        if (uri != null) {
+            viewModel.selectBackground(pendingPhotoSlot, uri)
+            if (showOnboarding) onboardingStep = 4
+        }
     }
 
     var showInfoDialog by remember { mutableStateOf(false) }
     var showDiagnosticDialog by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.onboardingReady, uiState.shouldShowOnboarding) {
+        if (uiState.onboardingReady && !onboardingInitialized) {
+            onboardingInitialized = true
+            showOnboarding = uiState.shouldShowOnboarding
+            if (uiState.shouldShowOnboarding) viewModel.markOnboardingSeen()
+        }
+    }
+
+    LaunchedEffect(showOnboarding, focusGoalForm) {
+        if (!showOnboarding && focusGoalForm) {
+            goalFormRequester.bringIntoView()
+            focusGoalForm = false
+        }
+    }
 
     LaunchedEffect(uiState.showSaveSuccessMessage) {
         if (uiState.showSaveSuccessMessage) {
@@ -118,6 +146,41 @@ fun GoalDotsApp(
         viewModel.saveGoal {
             launchWallpaperPicker(context)
         }
+    }
+
+    if (!onboardingInitialized) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    if (showOnboarding) {
+        OnboardingFlow(
+            step = onboardingStep,
+            onGetStarted = { onboardingStep = 2 },
+            onSkip = { showOnboarding = false },
+            onCreateGoal = {
+                showOnboarding = false
+                focusGoalForm = true
+            },
+            onExploreOptions = { onboardingStep = 3 },
+            onChoosePhotos = {
+                pendingPhotoSlot = WallpaperImageSlot.SINGLE
+                viewModel.setBackgroundMode(com.example.model.WallpaperBackgroundMode.SINGLE_IMAGE)
+                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onUseDefaultBlack = {
+                viewModel.setBackgroundMode(com.example.model.WallpaperBackgroundMode.DEFAULT_BLACK)
+                onboardingStep = 4
+            },
+            onSetWallpaper = {
+                showOnboarding = false
+                launchWallpaperPicker(context)
+            },
+            onFinishLater = { showOnboarding = false }
+        )
+        return
     }
 
     Scaffold(
@@ -272,6 +335,7 @@ fun GoalDotsApp(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .bringIntoViewRequester(goalFormRequester)
                     .testTag("goal_setup_card"),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(16.dp)
@@ -291,7 +355,7 @@ fun GoalDotsApp(
                         value = uiState.goalName,
                         onValueChange = { viewModel.updateName(it) },
                         label = { Text("What is your goal?") },
-                        placeholder = { Text("e.g. Build a profitable startup") },
+                        placeholder = { Text("e.g. Run a half marathon") },
                         singleLine = true,
                         trailingIcon = {
                             if (uiState.goalName.isNotEmpty()) {
