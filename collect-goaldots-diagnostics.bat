@@ -64,6 +64,11 @@ if not defined DATETIME_RAW (
 
 set "OUTDIR=%SCRIPT_DIR%diagnostics_%SAFE_STAMP%"
 mkdir "%OUTDIR%" 2>nul
+if not exist "%OUTDIR%\" (
+    echo [ERROR] Could not create output folder: %OUTDIR%
+    pause
+    exit /b 1
+)
 
 echo Target Application: %APP_ID%
 echo Output Directory:  %OUTDIR%
@@ -71,7 +76,9 @@ echo.
 
 echo [2/3] Starting continuous logcat capture to %OUTDIR%\logcat_stream.txt...
 "%ADB%" logcat -c
-start "GoalDots_Logcat_Session" /B "%ADB%" logcat -v time > "%OUTDIR%\logcat_stream.txt"
+type nul > "%OUTDIR%\logcat_stream.txt"
+REM A separate PowerShell helper avoids CMD's unreliable START/redirection parsing.
+start "GoalDots Logcat" /B powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%capture-goaldots-logcat.ps1" -AdbPath "%ADB%" -LogPath "%OUTDIR%\logcat_stream.txt"
 
 echo.
 echo ==============================================================================
@@ -86,7 +93,7 @@ echo  2. STATE B: Swipe Goal Dots card from Recent Apps.
 echo  3. STATE C: Lock screen (Power button) -> wait 3s -> unlock.
 echo  4. STATE D: Open app -> swipe from Recents -> lock/unlock (Complete failure).
 echo.
-echo *** WHEN FINISHED: PRESS Ctrl+C IN THIS WINDOW TO STOP ***
+echo When finished, press Ctrl+C in this window to stop.
 echo ==============================================================================
 echo.
 
@@ -109,7 +116,7 @@ if not defined WALLPAPER_PID set "WALLPAPER_PID=NOT_RUNNING"
 
 set "PREFIX=%OUTDIR%\snap_!PADDED_INDEX!_MAIN_!MAIN_PID!_WALLPAPER_!WALLPAPER_PID!"
 
-echo [!TIME!] Snapshot #!PADDED_INDEX! -- Main PID: !MAIN_PID! | Wallpaper PID: !WALLPAPER_PID!
+echo [!TIME!] Snapshot #!PADDED_INDEX! -- Main PID: !MAIN_PID! ^| Wallpaper PID: !WALLPAPER_PID!
 
 (
     echo SNAPSHOT: !PADDED_INDEX!
