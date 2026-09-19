@@ -17,3 +17,8 @@ local.properties
 .env
 debug.keystore
 .local-build/
+
+# Distribution binaries belong in GitHub Releases, never in source control.
+*.apk
+*.aab
+*.jks
