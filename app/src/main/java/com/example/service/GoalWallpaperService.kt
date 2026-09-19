@@ -550,7 +550,6 @@ class GoalWallpaperService : WallpaperService() {
                 try {
                     val selection = resolveBackgroundSelection()
                     backgroundRenderer.drawBackground(canvas, selection.hasImage, surfaceWidth, surfaceHeight)
-                    readabilityRenderer.drawOverlayReadabilityLayer(canvas, viewport)
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render START (loadState=${currentLoadState::class.simpleName}, dots=${snapshot.totalDots})")
                     renderer.render(
                         canvas = canvas,

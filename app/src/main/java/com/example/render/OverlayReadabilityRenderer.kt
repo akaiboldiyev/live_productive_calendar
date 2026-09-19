@@ -1,23 +1,27 @@
 package com.example.render
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
-import android.graphics.Paint
-import android.graphics.RectF
-import android.graphics.Shader
 import android.util.Log
 import com.example.model.OverlayReadabilityMode
 import com.example.model.ReadabilityModeSelector
 
-data class OverlayContentColors(val completedDot: Int, val futureDot: Int, val currentDot: Int, val currentDotRing: Int, val primaryText: Int, val secondaryText: Int, val accentText: Int)
-data class OverlayReadabilityStyle(val useLightContent: Boolean, val scrimColor: Int, val colors: OverlayContentColors)
+data class OverlayContentColors(
+    val completedDot: Int,
+    val futureDot: Int,
+    val currentDot: Int,
+    val currentDotRing: Int,
+    val primaryText: Int,
+    val secondaryText: Int,
+    val accentText: Int,
+    /** A small opposite-colour halo for individual text and dots, never a backdrop shape. */
+    val contrastHalo: Int
+)
+data class OverlayReadabilityStyle(val useLightContent: Boolean, val colors: OverlayContentColors)
 
 /** Caches a contrast decision on bitmap/config changes; drawing itself never samples pixels. */
 class OverlayReadabilityRenderer {
     companion object { private const val TAG = "GOAL_READABILITY" }
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var style = lightStyle()
 
     fun update(bitmap: Bitmap?, mode: OverlayReadabilityMode): OverlayReadabilityStyle {
@@ -28,14 +32,6 @@ class OverlayReadabilityRenderer {
     }
 
     fun currentStyle() = style
-
-    fun drawOverlayReadabilityLayer(canvas: Canvas, viewport: ViewportBounds) {
-        val inset = viewport.width * 0.045f
-        val rect = RectF(viewport.left + inset, viewport.top + viewport.height * 0.11f, viewport.right - inset, viewport.top + viewport.height * 0.89f)
-        paint.shader = LinearGradient(0f, rect.top, 0f, rect.bottom, intArrayOf(withAlpha(style.scrimColor, .35f), style.scrimColor, withAlpha(style.scrimColor, .35f)), floatArrayOf(0f, .5f, 1f), Shader.TileMode.CLAMP)
-        canvas.drawRoundRect(rect, viewport.width * .055f, viewport.width * .055f, paint)
-        paint.shader = null
-    }
 
     private fun averageLuminance(bitmap: Bitmap): Float {
         val xStart = bitmap.width / 6; val xEnd = bitmap.width * 5 / 6
@@ -48,7 +44,10 @@ class OverlayReadabilityRenderer {
         return if (samples == 0) 0f else total / samples
     }
 
-    private fun lightStyle() = OverlayReadabilityStyle(true, Color.argb(150, 8, 10, 14), OverlayContentColors(Color.WHITE, Color.rgb(184,192,204), Color.rgb(255,150,105), Color.argb(180,255,170,125), Color.WHITE, Color.rgb(222,228,238), Color.rgb(255,176,130)))
-    private fun darkStyle() = OverlayReadabilityStyle(false, Color.argb(160, 246,232,210), OverlayContentColors(Color.rgb(26,30,34), Color.rgb(82,88,94), Color.rgb(130,54,28), Color.argb(175,130,54,28), Color.rgb(18,22,26), Color.rgb(58,63,68), Color.rgb(112,43,20)))
-    private fun withAlpha(color: Int, factor: Float) = Color.argb((Color.alpha(color) * factor).toInt(), Color.red(color), Color.green(color), Color.blue(color))
+    private fun lightStyle() = OverlayReadabilityStyle(true, OverlayContentColors(
+        completedDot = Color.WHITE, futureDot = Color.rgb(184, 192, 204), currentDot = Color.rgb(255, 150, 105), currentDotRing = Color.argb(180, 255, 170, 125), primaryText = Color.WHITE, secondaryText = Color.rgb(222, 228, 238), accentText = Color.rgb(255, 176, 130), contrastHalo = Color.argb(185, 0, 0, 0)
+    ))
+    private fun darkStyle() = OverlayReadabilityStyle(false, OverlayContentColors(
+        completedDot = Color.rgb(26, 30, 34), futureDot = Color.rgb(82, 88, 94), currentDot = Color.rgb(130, 54, 28), currentDotRing = Color.argb(175, 130, 54, 28), primaryText = Color.rgb(18, 22, 26), secondaryText = Color.rgb(58, 63, 68), accentText = Color.rgb(112, 43, 20), contrastHalo = Color.argb(145, 255, 255, 255)
+    ))
 }

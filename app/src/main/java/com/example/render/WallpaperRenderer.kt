@@ -55,6 +55,9 @@ class WallpaperRenderer {
     private val currentDotRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
     }
+    private val dotHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
 
     private val headerTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
@@ -162,6 +165,7 @@ class WallpaperRenderer {
         headerTextPaint.color = overlayColors?.accentText ?: theme.accentTextColor
         titleLayoutPaint.color = overlayColors?.primaryText ?: theme.primaryTextColor
         footerTextPaint.color = overlayColors?.secondaryText ?: theme.secondaryTextColor
+        configureReadabilityHalos(overlayColors, density)
 
         // Responsive font sizing based on visible viewport width
         val headerSize = (viewport.width * 0.038f).coerceIn(12f * density, 18f * density)
@@ -242,6 +246,12 @@ class WallpaperRenderer {
             val dotY = cursorY + pos.y
             val state = if (i < snapshot.dotStates.size) snapshot.dotStates[i] else DotState.FUTURE
 
+            // A thin local outline preserves a dot against a busy photo without forming a
+            // visible panel behind the grid. It is skipped for the normal themed wallpaper.
+            if (overlayColors != null) {
+                canvas.drawCircle(dotX, dotY, radius + dotHaloPaint.strokeWidth * .5f, dotHaloPaint)
+            }
+
             when (state) {
                 DotState.COMPLETED -> {
                     canvas.drawCircle(dotX, dotY, radius, completedDotPaint)
@@ -267,6 +277,23 @@ class WallpaperRenderer {
             )
         }
         Log.d(TAG_RENDER, "render completed successfully: ${snapshot.totalDots} dots rendered")
+    }
+
+    private fun configureReadabilityHalos(overlayColors: OverlayContentColors?, density: Float) {
+        val halo = overlayColors?.contrastHalo
+        if (halo == null) {
+            dotHaloPaint.color = android.graphics.Color.TRANSPARENT
+            headerTextPaint.clearShadowLayer()
+            titleLayoutPaint.clearShadowLayer()
+            footerTextPaint.clearShadowLayer()
+            return
+        }
+        dotHaloPaint.color = halo
+        dotHaloPaint.strokeWidth = (1.15f * density).coerceIn(1.25f, 3f)
+        val shadowRadius = (1.6f * density).coerceIn(1.5f, 4f)
+        headerTextPaint.setShadowLayer(shadowRadius, 0f, density * .7f, halo)
+        titleLayoutPaint.setShadowLayer(shadowRadius, 0f, density * .7f, halo)
+        footerTextPaint.setShadowLayer(shadowRadius, 0f, density * .7f, halo)
     }
 
     private fun renderEmptyState(
