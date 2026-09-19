@@ -39,10 +39,14 @@ jobs:
           test -n "$STORE_PASSWORD" && test -n "$KEY_PASSWORD" || { echo "Missing signing password secret"; exit 1; }
           gradle :app:testDebugUnitTest --tests com.example.GoalProgressCalculatorTest --tests com.example.WallpaperBackgroundRendererTest --tests com.example.WallpaperScheduleTest --no-daemon
           gradle :app:assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/Goal-Dots.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -n "$APKSIGNER" || { echo "Android apksigner was not found"; exit 1; }
+          "$APKSIGNER" verify --verbose --print-certs "$RUNNER_TEMP/Goal-Dots.apk"
 
       - name: Publish the one user-facing APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" app/build/outputs/apk/release/app-release.apk#Goal-Dots.apk --title "Goal Dots ${TAG#v}" --generate-notes
+          gh release create "$TAG" "$RUNNER_TEMP/Goal-Dots.apk" --title "Goal Dots ${TAG#v}" --generate-notes
