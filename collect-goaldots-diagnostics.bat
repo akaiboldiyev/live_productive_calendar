@@ -28,12 +28,17 @@ if %ERRORLEVEL% neq 0 (
 
 :adb_found
 
-for /f "tokens=1,2" %%A in ('"%ADB%" devices ^| findstr /v "List of devices attached" ^| findstr /r "[a-zA-Z0-9]"') do (
+REM Do not use a quoted adb command inside FOR /F. CMD mis-parses that form on
+REM some Windows installations; a short file makes device detection reliable.
+set "DEVICE_LIST_FILE=%TEMP%\goaldots_adb_devices_%RANDOM%.txt"
+"%ADB%" devices > "%DEVICE_LIST_FILE%" 2>nul
+for /f "usebackq tokens=1,2" %%A in ("%DEVICE_LIST_FILE%") do (
     if "%%B"=="device" (
         set "DEVICE_SERIAL=%%A"
         goto :device_found
     )
 )
+del "%DEVICE_LIST_FILE%" >nul 2>&1
 
 echo [ERROR] No connected Android device found!
 echo Ensure USB debugging is ON and device is authorized.
@@ -41,7 +46,13 @@ pause
 exit /b 1
 
 :device_found
+del "%DEVICE_LIST_FILE%" >nul 2>&1
 echo Device connected: %DEVICE_SERIAL%
+
+if /i "%GOALDOTS_DIAGNOSTICS_DRY_RUN%"=="1" (
+    echo [TEST] Device detection succeeded. No logcat was cleared.
+    exit /b 0
+)
 
 REM Safe timestamp generation for Windows CMD without localized date slash errors
 for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul') do set "DATETIME_RAW=%%I"
@@ -87,15 +98,13 @@ set "PADDED_INDEX=0000%SNAPSHOT_COUNT%"
 set "PADDED_INDEX=!PADDED_INDEX:~-4!"
 
 set "MAIN_PID="
-for /f "usebackq delims=" %%P in (`"%ADB%" shell "pidof %APP_ID%" 2^>nul`) do (
-    set "MAIN_PID=%%P"
-)
+"%ADB%" shell pidof %APP_ID% > "%OUTDIR%\current_main_pid.txt" 2>nul
+set /p MAIN_PID=<"%OUTDIR%\current_main_pid.txt"
 if not defined MAIN_PID set "MAIN_PID=NOT_RUNNING"
 
 set "WALLPAPER_PID="
-for /f "usebackq delims=" %%P in (`"%ADB%" shell "pidof %APP_ID%:wallpaper" 2^>nul`) do (
-    set "WALLPAPER_PID=%%P"
-)
+"%ADB%" shell pidof %APP_ID%:wallpaper > "%OUTDIR%\current_wallpaper_pid.txt" 2>nul
+set /p WALLPAPER_PID=<"%OUTDIR%\current_wallpaper_pid.txt"
 if not defined WALLPAPER_PID set "WALLPAPER_PID=NOT_RUNNING"
 
 set "PREFIX=%OUTDIR%\snap_!PADDED_INDEX!_MAIN_!MAIN_PID!_WALLPAPER_!WALLPAPER_PID!"
