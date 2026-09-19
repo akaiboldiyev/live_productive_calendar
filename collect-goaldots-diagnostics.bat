@@ -7,17 +7,28 @@ REM Package: com.aistudio.goaldots.wkqn
 REM ==============================================================================
 
 set "APP_ID=com.aistudio.goaldots.wkqn"
+set "SCRIPT_DIR=%~dp0"
 
+REM Prefer the private platform-tools folder shipped beside this script. This means
+REM the user never needs to add adb to PATH or open a terminal in a special folder.
+set "ADB=%SCRIPT_DIR%platform-tools\adb.exe"
 echo [1/3] Checking ADB connection...
-where adb >nul 2>&1
+if exist "%ADB%" goto :adb_found
+
+REM Retain a PATH fallback for developers who run the script from the repository.
+set "ADB=adb.exe"
+
+where adb.exe >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] 'adb' was not found in PATH!
-    echo Please make sure Android platform-tools is in PATH or run from that directory.
+    echo [ERROR] adb.exe was not found.
+    echo Keep the platform-tools folder beside this script, then run START_GOALDOTS_DIAGNOSTICS.bat.
     pause
     exit /b 1
 )
 
-for /f "tokens=1,2" %%A in ('adb devices ^| findstr /v "List of devices attached" ^| findstr /r "[a-zA-Z0-9]"') do (
+:adb_found
+
+for /f "tokens=1,2" %%A in ('"%ADB%" devices ^| findstr /v "List of devices attached" ^| findstr /r "[a-zA-Z0-9]"') do (
     if "%%B"=="device" (
         set "DEVICE_SERIAL=%%A"
         goto :device_found
@@ -40,7 +51,7 @@ if not defined DATETIME_RAW (
     set "SAFE_STAMP=%DATETIME_RAW:~0,8%_%DATETIME_RAW:~8,6%"
 )
 
-set "OUTDIR=diagnostics_%SAFE_STAMP%"
+set "OUTDIR=%SCRIPT_DIR%diagnostics_%SAFE_STAMP%"
 mkdir "%OUTDIR%" 2>nul
 
 echo Target Application: %APP_ID%
@@ -48,8 +59,8 @@ echo Output Directory:  %OUTDIR%
 echo.
 
 echo [2/3] Starting continuous logcat capture to %OUTDIR%\logcat_stream.txt...
-adb logcat -c
-start "GoalDots_Logcat_Session" /B adb logcat -v time > "%OUTDIR%\logcat_stream.txt"
+"%ADB%" logcat -c
+start "GoalDots_Logcat_Session" /B "%ADB%" logcat -v time > "%OUTDIR%\logcat_stream.txt"
 
 echo.
 echo ==============================================================================
@@ -76,13 +87,13 @@ set "PADDED_INDEX=0000%SNAPSHOT_COUNT%"
 set "PADDED_INDEX=!PADDED_INDEX:~-4!"
 
 set "MAIN_PID="
-for /f "usebackq delims=" %%P in (`adb shell "pidof %APP_ID%" 2^>nul`) do (
+for /f "usebackq delims=" %%P in (`"%ADB%" shell "pidof %APP_ID%" 2^>nul`) do (
     set "MAIN_PID=%%P"
 )
 if not defined MAIN_PID set "MAIN_PID=NOT_RUNNING"
 
 set "WALLPAPER_PID="
-for /f "usebackq delims=" %%P in (`adb shell "pidof %APP_ID%:wallpaper" 2^>nul`) do (
+for /f "usebackq delims=" %%P in (`"%ADB%" shell "pidof %APP_ID%:wallpaper" 2^>nul`) do (
     set "WALLPAPER_PID=%%P"
 )
 if not defined WALLPAPER_PID set "WALLPAPER_PID=NOT_RUNNING"
@@ -98,8 +109,8 @@ echo [!TIME!] Snapshot #!PADDED_INDEX! -- Main PID: !MAIN_PID! | Wallpaper PID: 
     echo WALLPAPER_PROCESS_PID: !WALLPAPER_PID!
 ) > "!PREFIX!_info.txt" 2>nul
 
-adb shell dumpsys wallpaper > "!PREFIX!_dumpsys_wallpaper.txt" 2>nul
-adb shell "dumpsys activity services %APP_ID%" > "!PREFIX!_dumpsys_services.txt" 2>nul
+"%ADB%" shell dumpsys wallpaper > "!PREFIX!_dumpsys_wallpaper.txt" 2>nul
+"%ADB%" shell "dumpsys activity services %APP_ID%" > "!PREFIX!_dumpsys_services.txt" 2>nul
 
 REM Reliable 2-second sleep in Windows CMD
 ping 127.0.0.1 -n 3 >nul 2>&1
