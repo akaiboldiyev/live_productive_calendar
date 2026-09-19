@@ -18,7 +18,6 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
-import com.example.model.EyeComfortMode
 import com.example.model.OverlayReadabilityMode
 import com.example.model.WallpaperBackgroundMode
 import com.example.model.WallpaperImageSlot
@@ -70,7 +69,6 @@ class GoalRepository(private val context: Context) {
         private val KEY_HAS_DAY_IMAGE = booleanPreferencesKey("background_has_day_image")
         private val KEY_HAS_EVENING_IMAGE = booleanPreferencesKey("background_has_evening_image")
         private val KEY_READABILITY_MODE = stringPreferencesKey("background_readability_mode")
-        private val KEY_EYE_COMFORT_MODE = stringPreferencesKey("background_eye_comfort_mode")
         private val KEY_BACKGROUND_REVISION = longPreferencesKey("background_revision")
         private val KEY_BACKGROUND_IMAGE_REVISION = longPreferencesKey("background_image_revision")
 
@@ -227,7 +225,6 @@ class GoalRepository(private val context: Context) {
                 hasDayImage = preferences[KEY_HAS_DAY_IMAGE] ?: false,
                 hasEveningImage = preferences[KEY_HAS_EVENING_IMAGE] ?: false,
                 readabilityMode = preferences[KEY_READABILITY_MODE].asEnumOrNull<OverlayReadabilityMode>() ?: OverlayReadabilityMode.AUTO,
-                eyeComfortMode = preferences[KEY_EYE_COMFORT_MODE].asEnumOrNull<EyeComfortMode>() ?: EyeComfortMode.OFF,
                 imageRevision = preferences[KEY_BACKGROUND_IMAGE_REVISION] ?: revision,
                 revision = revision
             )
@@ -330,14 +327,6 @@ class GoalRepository(private val context: Context) {
     suspend fun setReadabilityMode(mode: OverlayReadabilityMode) {
         dataStore.edit { preferences ->
             preferences[KEY_READABILITY_MODE] = mode.name
-            incrementBackgroundRevision(preferences)
-        }
-        sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)
-    }
-
-    suspend fun setEyeComfortMode(mode: EyeComfortMode) {
-        dataStore.edit { preferences ->
-            preferences[KEY_EYE_COMFORT_MODE] = mode.name
             incrementBackgroundRevision(preferences)
         }
         sendUpdateBroadcast(ACTION_BACKGROUND_UPDATED)

@@ -549,8 +549,7 @@ class GoalWallpaperService : WallpaperService() {
                 Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] lockCanvas SUCCESS (attempt $attempt)")
                 try {
                     val selection = resolveBackgroundSelection()
-                    val eyeComfort = WallpaperSchedule.isEyeComfortEnabled(currentBackgroundConfig, selection.period)
-                    backgroundRenderer.drawBackground(canvas, selection.hasImage, eyeComfort, surfaceWidth, surfaceHeight)
+                    backgroundRenderer.drawBackground(canvas, selection.hasImage, surfaceWidth, surfaceHeight)
                     readabilityRenderer.drawOverlayReadabilityLayer(canvas, viewport)
                     Log.d(TAG_TIMELINE, "${t()} Engine[$engineId] WallpaperRenderer.render START (loadState=${currentLoadState::class.simpleName}, dots=${snapshot.totalDots})")
                     renderer.render(
@@ -767,10 +766,7 @@ class GoalWallpaperService : WallpaperService() {
         }
 
         private fun updateReadability() {
-            val selection = WallpaperSchedule.select(currentBackgroundConfig, LocalTime.now())
-            val eyeComfort = WallpaperSchedule.isEyeComfortEnabled(currentBackgroundConfig, selection.period)
-            readabilityRenderer.update(backgroundRenderer.currentBitmap(), currentBackgroundConfig.readabilityMode, eyeComfort)
-            Log.d(TAG_ENGINE, "Engine[$engineId] Eye comfort ${if (eyeComfort) "enabled" else "disabled"}")
+            readabilityRenderer.update(backgroundRenderer.currentBitmap(), currentBackgroundConfig.readabilityMode)
         }
 
         private fun scheduleBackgroundTransition() {

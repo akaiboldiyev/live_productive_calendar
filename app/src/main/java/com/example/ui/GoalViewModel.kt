@@ -9,7 +9,6 @@ import com.example.data.GoalLoadState
 import com.example.data.GoalRepository
 import com.example.model.AppearanceSettings
 import com.example.model.ColorTheme
-import com.example.model.EyeComfortMode
 import com.example.model.GoalData
 import com.example.model.GoalProgressCalculator
 import com.example.model.GoalSnapshot
@@ -252,7 +251,6 @@ class GoalViewModel(application: Application) : AndroidViewModel(application) {
     fun setBackgroundMode(mode: WallpaperBackgroundMode) = updateBackground { repository.setBackgroundMode(mode) }
     fun updateSchedule(dayStartMinutes: Int, eveningStartMinutes: Int) = updateBackground { repository.updateSchedule(dayStartMinutes, eveningStartMinutes) }
     fun setReadabilityMode(mode: OverlayReadabilityMode) = updateBackground { repository.setReadabilityMode(mode) }
-    fun setEyeComfortMode(mode: EyeComfortMode) = updateBackground { repository.setEyeComfortMode(mode) }
 
     private fun updateBackground(block: suspend () -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {

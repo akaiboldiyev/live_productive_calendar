@@ -18,12 +18,12 @@ data class OverlayReadabilityStyle(val useLightContent: Boolean, val scrimColor:
 class OverlayReadabilityRenderer {
     companion object { private const val TAG = "GOAL_READABILITY" }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var style = lightStyle(false)
+    private var style = lightStyle()
 
-    fun update(bitmap: Bitmap?, mode: OverlayReadabilityMode, eyeComfort: Boolean): OverlayReadabilityStyle {
+    fun update(bitmap: Bitmap?, mode: OverlayReadabilityMode): OverlayReadabilityStyle {
         val useLight = ReadabilityModeSelector.useLightContent(mode, bitmap?.let(::averageLuminance))
-        style = if (useLight) lightStyle(eyeComfort) else darkStyle(eyeComfort)
-        Log.i(TAG, "Contrast mode selected: ${if (useLight) "light content" else "dark content"}, requested=$mode, eyeComfort=$eyeComfort")
+        style = if (useLight) lightStyle() else darkStyle()
+        Log.i(TAG, "Contrast mode selected: ${if (useLight) "light content" else "dark content"}, requested=$mode")
         return style
     }
 
@@ -48,7 +48,7 @@ class OverlayReadabilityRenderer {
         return if (samples == 0) 0f else total / samples
     }
 
-    private fun lightStyle(eyeComfort: Boolean) = OverlayReadabilityStyle(true, Color.argb(if (eyeComfort) 175 else 150, 8, 10, 14), OverlayContentColors(if (eyeComfort) Color.rgb(232,220,198) else Color.WHITE, if (eyeComfort) Color.rgb(152,144,130) else Color.rgb(184,192,204), Color.rgb(255,150,105), Color.argb(180,255,170,125), if (eyeComfort) Color.rgb(238,226,208) else Color.WHITE, if (eyeComfort) Color.rgb(204,190,170) else Color.rgb(222,228,238), Color.rgb(255,176,130)))
-    private fun darkStyle(eyeComfort: Boolean) = OverlayReadabilityStyle(false, Color.argb(if (eyeComfort) 185 else 160, 246,232,210), OverlayContentColors(Color.rgb(26,30,34), Color.rgb(82,88,94), Color.rgb(130,54,28), Color.argb(175,130,54,28), Color.rgb(18,22,26), Color.rgb(58,63,68), Color.rgb(112,43,20)))
+    private fun lightStyle() = OverlayReadabilityStyle(true, Color.argb(150, 8, 10, 14), OverlayContentColors(Color.WHITE, Color.rgb(184,192,204), Color.rgb(255,150,105), Color.argb(180,255,170,125), Color.WHITE, Color.rgb(222,228,238), Color.rgb(255,176,130)))
+    private fun darkStyle() = OverlayReadabilityStyle(false, Color.argb(160, 246,232,210), OverlayContentColors(Color.rgb(26,30,34), Color.rgb(82,88,94), Color.rgb(130,54,28), Color.argb(175,130,54,28), Color.rgb(18,22,26), Color.rgb(58,63,68), Color.rgb(112,43,20)))
     private fun withAlpha(color: Int, factor: Float) = Color.argb((Color.alpha(color) * factor).toInt(), Color.red(color), Color.green(color), Color.blue(color))
 }

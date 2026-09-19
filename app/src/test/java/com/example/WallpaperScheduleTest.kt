@@ -1,7 +1,6 @@
 package com.example
 
 import com.example.model.BackgroundPeriod
-import com.example.model.EyeComfortMode
 import com.example.model.OverlayReadabilityMode
 import com.example.model.ReadabilityModeSelector
 import com.example.model.WallpaperBackgroundConfig
@@ -41,9 +40,10 @@ class WallpaperScheduleTest {
         assertFalse(ReadabilityModeSelector.useLightContent(OverlayReadabilityMode.DARK, .1f))
     }
 
-    @Test fun `automatic eye comfort only activates in scheduled evening`() {
-        val config = WallpaperBackgroundConfig(mode = WallpaperBackgroundMode.SCHEDULED_IMAGES, eyeComfortMode = EyeComfortMode.AUTOMATIC_BY_SCHEDULE)
-        assertTrue(WallpaperSchedule.isEyeComfortEnabled(config, BackgroundPeriod.EVENING))
-        assertFalse(WallpaperSchedule.isEyeComfortEnabled(config, BackgroundPeriod.DAY))
+    @Test fun `scheduled mode without images always selects black fallback`() {
+        val config = WallpaperBackgroundConfig(mode = WallpaperBackgroundMode.SCHEDULED_IMAGES)
+        val selection = WallpaperSchedule.select(config, LocalTime.of(10, 0))
+        assertEquals(BackgroundPeriod.DAY, selection.period)
+        assertFalse(selection.hasImage)
     }
 }

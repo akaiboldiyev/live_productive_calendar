@@ -5,6 +5,8 @@ import android.app.TimePickerDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -363,7 +365,8 @@ fun GoalDotsApp(
                     }, current / 60, current % 60, true).show()
                 },
                 onReadabilitySelected = viewModel::setReadabilityMode,
-                onEyeComfortSelected = viewModel::setEyeComfortMode
+                onOpenDarkThemeSchedule = { openDarkThemeSchedule(context) },
+                onOpenEyeComfortSchedule = { openEyeComfortSchedule(context) }
             )
 
             // 6. Save Changes Button
@@ -446,5 +449,42 @@ private fun launchWallpaperPicker(context: Context) {
                 Toast.LENGTH_LONG
             ).show()
         }
+    }
+}
+
+private fun openDarkThemeSchedule(context: Context) {
+    openSystemSettings(
+        context = context,
+        intent = Intent(Settings.ACTION_DISPLAY_SETTINGS),
+        instructions = "Open Dark mode, then choose Schedule."
+    )
+}
+
+private fun openEyeComfortSchedule(context: Context) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Intent(Settings.ACTION_NIGHT_DISPLAY_SETTINGS)
+    } else {
+        Intent(Settings.ACTION_DISPLAY_SETTINGS)
+    }
+    openSystemSettings(
+        context = context,
+        intent = intent,
+        instructions = "Open Reading mode or Eye comfort, then choose a schedule."
+    )
+}
+
+private fun openSystemSettings(context: Context, intent: Intent, instructions: String) {
+    try {
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        if (intent.action != Settings.ACTION_DISPLAY_SETTINGS) {
+            try {
+                context.startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS))
+                return
+            } catch (_: Exception) {
+                // The message below gives a safe path when an OEM does not expose this intent.
+            }
+        }
+        Toast.makeText(context, instructions, Toast.LENGTH_LONG).show()
     }
 }

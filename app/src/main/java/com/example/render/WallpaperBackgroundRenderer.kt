@@ -5,7 +5,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.media.ExifInterface
 import android.util.Log
@@ -140,7 +139,7 @@ class WallpaperBackgroundRenderer {
 
     fun currentBitmap(): Bitmap? = cachedBitmap?.takeUnless { it.isRecycled }
 
-    fun drawBackground(canvas: Canvas, hasActiveImage: Boolean, eyeComfortEnabled: Boolean, width: Int, height: Int) {
+    fun drawBackground(canvas: Canvas, hasActiveImage: Boolean, width: Int, height: Int) {
         val bitmap = cachedBitmap
         if (!hasActiveImage || bitmap == null || bitmap.isRecycled) {
             canvas.drawColor(Color.BLACK)
@@ -161,10 +160,6 @@ class WallpaperBackgroundRenderer {
             (height + scaledHeight) / 2f
         )
         canvas.drawBitmap(bitmap, null, destination, bitmapPaint)
-        if (eyeComfortEnabled) {
-            // A single translucent warm layer is cheaper and safer than transforming bitmap pixels.
-            canvas.drawColor(Color.argb(68, 64, 34, 8), PorterDuff.Mode.SRC_OVER)
-        }
     }
 
     fun release() = clearCache(logInvalidation = false)

@@ -6,7 +6,6 @@ import java.time.LocalTime
 enum class WallpaperBackgroundMode { DEFAULT_BLACK, SINGLE_IMAGE, SCHEDULED_IMAGES }
 enum class WallpaperImageSlot { SINGLE, DAY, EVENING }
 enum class OverlayReadabilityMode { AUTO, LIGHT, DARK }
-enum class EyeComfortMode { OFF, AUTOMATIC_BY_SCHEDULE, ALWAYS_ON }
 enum class BackgroundPeriod { DAY, EVENING }
 
 object ReadabilityModeSelector {
@@ -26,7 +25,6 @@ data class WallpaperBackgroundConfig(
     val hasDayImage: Boolean = false,
     val hasEveningImage: Boolean = false,
     val readabilityMode: OverlayReadabilityMode = OverlayReadabilityMode.AUTO,
-    val eyeComfortMode: EyeComfortMode = EyeComfortMode.OFF,
     /** Changes only when the bytes or availability of a photo change. */
     val imageRevision: Long = 0L,
     /** Changes whenever a file/configuration changes, so another process invalidates its cache. */
@@ -65,9 +63,4 @@ object WallpaperSchedule {
         }
     }
 
-    fun isEyeComfortEnabled(config: WallpaperBackgroundConfig, period: BackgroundPeriod?): Boolean = when (config.eyeComfortMode) {
-        EyeComfortMode.OFF -> false
-        EyeComfortMode.ALWAYS_ON -> true
-        EyeComfortMode.AUTOMATIC_BY_SCHEDULE -> config.mode == WallpaperBackgroundMode.SCHEDULED_IMAGES && period == BackgroundPeriod.EVENING
-    }
 }

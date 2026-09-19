@@ -21,7 +21,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.EyeComfortMode
 import com.example.model.OverlayReadabilityMode
 import com.example.model.WallpaperBackgroundConfig
 import com.example.model.WallpaperBackgroundMode
@@ -30,7 +29,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun BackgroundCard(config: WallpaperBackgroundConfig, isImporting: Boolean, error: String?, onModeSelected: (WallpaperBackgroundMode) -> Unit, onChoosePhoto: (WallpaperImageSlot) -> Unit, onRemovePhoto: (WallpaperImageSlot) -> Unit, onChooseTime: (Boolean) -> Unit, onReadabilitySelected: (OverlayReadabilityMode) -> Unit, onEyeComfortSelected: (EyeComfortMode) -> Unit, modifier: Modifier = Modifier) {
+fun BackgroundCard(config: WallpaperBackgroundConfig, isImporting: Boolean, error: String?, onModeSelected: (WallpaperBackgroundMode) -> Unit, onChoosePhoto: (WallpaperImageSlot) -> Unit, onRemovePhoto: (WallpaperImageSlot) -> Unit, onChooseTime: (Boolean) -> Unit, onReadabilitySelected: (OverlayReadabilityMode) -> Unit, onOpenDarkThemeSchedule: () -> Unit, onOpenEyeComfortSchedule: () -> Unit, modifier: Modifier = Modifier) {
     Card(modifier = modifier.fillMaxWidth().testTag("background_card"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("BACKGROUND", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
@@ -50,8 +49,10 @@ fun BackgroundCard(config: WallpaperBackgroundConfig, isImporting: Boolean, erro
             Text("OVERLAY READABILITY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
             ChoiceRow(listOf("Auto" to OverlayReadabilityMode.AUTO, "Light" to OverlayReadabilityMode.LIGHT, "Dark" to OverlayReadabilityMode.DARK), config.readabilityMode, onReadabilitySelected)
             Text("Auto adds a soft contrast layer and colors that stay visible without hiding your photo.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("EYE COMFORT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
-            ChoiceRow(listOf("Off" to EyeComfortMode.OFF, "Automatic" to EyeComfortMode.AUTOMATIC_BY_SCHEDULE, "Always on" to EyeComfortMode.ALWAYS_ON), config.eyeComfortMode, onEyeComfortSelected)
+            Text("SYSTEM EVENING SCHEDULE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
+            Text("Goal Dots cannot change phone-wide Dark mode or Reading mode. Open each system page once and set the same times shown above.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = onOpenDarkThemeSchedule, modifier = Modifier.fillMaxWidth().testTag("open_dark_theme_schedule_button")) { Text("Open Dark theme schedule") }
+            OutlinedButton(onClick = onOpenEyeComfortSchedule, modifier = Modifier.fillMaxWidth().testTag("open_eye_comfort_schedule_button")) { Text("Open Eye comfort schedule") }
             if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
